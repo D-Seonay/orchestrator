@@ -46,35 +46,26 @@ function updateResourceUsage(name) {
   }
 
   const pid = state.child.pid;
-  // Windows specific: get working set (RAM) and processor time
-  const cmd = `wmic process where processid=${pid} get WorkingSetSize,UserModeTime,KernelModeTime /format:list`;
+  const cmd = `powershell.exe -NoProfile -Command "Get-Process -Id ${pid} -ErrorAction SilentlyContinue | Select-Object WorkingSet64, @{Name='TotalProcessorTime';Expression={$_.UserProcessorTime.TotalMilliseconds + $_.PrivilegedProcessorTime.TotalMilliseconds}} | ConvertTo-Json"`;
   
   exec(cmd, (err, stdout) => {
     if (err || !stdout) return;
-    
-    const lines = stdout.split('\n');
-    const data = {};
-    lines.forEach(l => {
-      const [k, v] = l.split('=');
-      if (k && v) data[k.trim()] = v.trim();
-    });
-
-    const ram = data.WorkingSetSize ? `${(parseInt(data.WorkingSetSize) / 1024 / 1024).toFixed(1)}MB` : '0MB';
-    const totalTime = (parseInt(data.UserModeTime || 0) + parseInt(data.KernelModeTime || 0));
-    
-    // CPU calculation logic
-    const now = Date.now();
-    if (state.lastUsage) {
-      const timeDiff = now - state.lastUsage.time;
-      const cpuDiff = totalTime - state.lastUsage.cpuTime;
-      // UserModeTime is in 100ns units. 1ms = 10,000 units.
-      const cpuPercent = ((cpuDiff / 10000) / timeDiff * 100).toFixed(1);
-      state.resources = { cpu: `${cpuPercent}%`, ram };
-    } else {
-      state.resources = { cpu: '...', ram };
-    }
-    
-    state.lastUsage = { time: now, cpuTime: totalTime };
+    try {
+      const data = JSON.parse(stdout);
+      if (!data) return;
+      const ram = data.WorkingSet64 ? `${(parseInt(data.WorkingSet64) / 1024 / 1024).toFixed(1)}MB` : '0MB';
+      const totalTime = parseFloat(data.TotalProcessorTime || 0);
+      const now = Date.now();
+      if (state.lastUsage) {
+        const timeDiff = now - state.lastUsage.time;
+        const cpuDiff = totalTime - state.lastUsage.cpuTime;
+        const cpuPercent = ((cpuDiff / timeDiff) * 100).toFixed(1);
+        state.resources = { cpu: `${cpuPercent}%`, ram };
+      } else {
+        state.resources = { cpu: '...', ram };
+      }
+      state.lastUsage = { time: now, cpuTime: totalTime };
+    } catch (e) {}
   });
 }
 
@@ -82,24 +73,16 @@ function updateResourceUsage(name) {
 function updateGitInfo(name) {
   const state = processes.get(name);
   if (!state || !state.config.cwd) return;
-
   const cwd = state.config.cwd;
   const cmd = 'git rev-parse --abbrev-ref HEAD && git status --porcelain && git rev-list --left-right --count HEAD...@{u}';
-  
   exec(cmd, { cwd }, (err, stdout) => {
-    if (err) {
-      state.git = { branch: 'N/A', dirty: false, sync: 'no repo' };
-      return;
-    }
-
+    if (err) { state.git = { branch: 'N/A', dirty: false, sync: 'no repo' }; return; }
     const lines = stdout.split('\n');
     const branch = (lines[0] || '').trim();
     if (!branch) return;
-
     const porcelain = stdout.split(branch)[1] || '';
     const statusLines = porcelain.split('\n').filter(l => l.trim().length > 0);
     const isDirty = statusLines.some(l => !l.match(/^\d+\t\d+$/));
-    
     let sync = '';
     const syncLine = statusLines.find(l => l.match(/^\d+\t\d+$/));
     if (syncLine) {
@@ -107,7 +90,6 @@ function updateGitInfo(name) {
       if (ahead > 0) sync += ` ⬆️${ahead}`;
       if (behind > 0) sync += ` ⬇️${behind}`;
     }
-
     state.git = { branch, dirty: isDirty, sync: sync.trim() };
     renderDashboard();
   });
@@ -117,22 +99,22 @@ function updateGitInfo(name) {
 function getAppStats(name) {
   const procState = processes.get(name);
   if (!procState) return { status: 'Stopped', restarts: 0, uptime: '0s', color: '31', git: { branch: '-', dirty: false, sync: '' }, resources: { cpu: '0%', ram: '0MB' } };
-  
-  const uptime = procState.child && !procState.child.killed && procState.startTime
-    ? Math.floor((Date.now() - procState.startTime) / 1000) 
-    : 0;
-  
-  const uptimeStr = uptime > 60 ? `${Math.floor(uptime/60)}m ${uptime%60}s` : `${uptime}s`;
   const isOnline = procState.child && !procState.child.killed;
+  const uptime = isOnline && procState.startTime ? Math.floor((Date.now() - procState.startTime) / 1000) : 0;
+  const uptimeStr = uptime > 60 ? `${Math.floor(uptime/60)}m ${uptime%60}s` : `${uptime}s`;
+  
+  let statusText = isOnline ? 'Online' : (procState.shouldRun ? 'Restarting' : 'Stopped');
+  let color = isOnline ? '32' : (procState.shouldRun ? '33' : '31');
 
   return {
-    status: isOnline ? 'Online' : 'Error',
+    status: statusText,
     restarts: procState.restarts || 0,
     uptime: uptimeStr,
-    color: isOnline ? '32' : '31',
+    color,
     logs: procState.logs || [],
     git: procState.git || { branch: '...', dirty: false, sync: '' },
-    resources: procState.resources || { cpu: '0%', ram: '0MB' }
+    resources: procState.resources || { cpu: '0%', ram: '0MB' },
+    shouldRun: procState.shouldRun
   };
 }
 
@@ -142,26 +124,16 @@ function renderDashboard() {
   process.stdout.write('\x1b[s\x1b[H'); 
   process.stdout.write('\x1b[1m\x1b[36m=== ORCHESTRATOR DASHBOARD ===\x1b[0m\x1b[K\n');
   process.stdout.write(`Global Uptime: ${Math.floor((Date.now() - startTime) / 1000)}s | Web UI: http://localhost:${WEB_PORT}\x1b[K\n\n`);
-  
-  const head = 'NAME'.padEnd(18) + 'STATUS'.padEnd(10) + 'CPU'.padEnd(8) + 'RAM'.padEnd(10) + 'GIT'.padEnd(15) + 'UPTIME';
+  const head = 'NAME'.padEnd(18) + 'STATUS'.padEnd(12) + 'CPU'.padEnd(8) + 'RAM'.padEnd(10) + 'GIT'.padEnd(15) + 'UPTIME';
   process.stdout.write('\x1b[1m' + head + '\x1b[0m\x1b[K\n');
   process.stdout.write('-'.repeat(75) + '\x1b[K\n');
-  
   for (const app of appsConfig) {
     const stats = getAppStats(app.name);
     const gitDisplay = `${stats.git.branch}${stats.git.dirty ? '*' : ''}${stats.git.sync}`;
-    const statusFormatted = `\x1b[${stats.color}m${stats.status.padEnd(10)}\x1b[0m`;
-    
-    process.stdout.write(
-      app.name.padEnd(18) + 
-      statusFormatted + 
-      stats.resources.cpu.padEnd(8) + 
-      stats.resources.ram.padEnd(10) + 
-      gitDisplay.padEnd(15) + 
-      stats.uptime + '\x1b[K\n'
-    );
+    const statusFormatted = `\x1b[${stats.color}m${stats.status.padEnd(12)}\x1b[0m`;
+    process.stdout.write(app.name.padEnd(18) + statusFormatted + stats.resources.cpu.padEnd(8) + stats.resources.ram.padEnd(10) + gitDisplay.padEnd(15) + stats.uptime + '\x1b[K\n');
   }
-  process.stdout.write('-'.repeat(75) + '\x1b[K\n\x1b[2mLogs scroll below. Type app name to restart.\x1b[0m\x1b[K\n\x1b[u'); 
+  process.stdout.write('-'.repeat(75) + '\x1b[K\n\x1b[2mCommands: start/stop/restart [name], list, git. Logs scroll below.\x1b[0m\x1b[K\n\x1b[u'); 
 }
 
 // --- Serveur Web Dashboard ---
@@ -171,99 +143,105 @@ const server = http.createServer((req, res) => {
 
   if (pathname === '/restart-all') {
     for (const app of appsConfig) restartApp(app.name);
-    res.writeHead(302, { 'Location': '/' });
-    return res.end();
+    res.writeHead(302, { 'Location': '/' }); return res.end();
   }
 
   if (pathname === '/restart') {
     const appName = reqUrl.query.app;
     if (appName) restartApp(appName);
-    res.writeHead(302, { 'Location': '/' });
-    return res.end();
+    res.writeHead(302, { 'Location': '/' }); return res.end();
+  }
+
+  if (pathname === '/stop') {
+    const appName = reqUrl.query.app;
+    if (appName) stopApp(appName);
+    res.writeHead(302, { 'Location': '/' }); return res.end();
+  }
+
+  if (pathname === '/start') {
+    const appName = reqUrl.query.app;
+    const config = appsConfig.find(a => a.name === appName);
+    if (config) startApp(config);
+    res.writeHead(302, { 'Location': '/' }); return res.end();
   }
 
   if (pathname === '/logs') {
     const appName = reqUrl.query.app;
     const stats = getAppStats(appName);
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    return res.end(`
-      <html>
-        <head><title>Logs - ${appName}</title><style>body{background:#1e1e1e;color:#d4d4d4;font-family:monospace;padding:20px;}.header{position:sticky;top:0;background:#252526;padding:10px;border-bottom:1px solid #333;margin-bottom:15px;display:flex;justify-content:space-between;}a{color:#569cd6;text-decoration:none;font-weight:bold;}.log-line{white-space:pre-wrap;margin-bottom:4px;border-bottom:1px solid #2a2a2a;padding-bottom:2px;}</style></head>
-        <body><div class="header"><strong>Logs for ${appName}</strong><div><a href="/">Back</a> | <a href="/logs?app=${appName}">Refresh</a></div></div>
-        ${stats.logs.map(l => `<div class="log-line">${l}</div>`).join('')}
-        <script>window.scrollTo(0, document.body.scrollHeight);</script></body>
-      </html>
-    `);
+    return res.end(`<html><head><title>Logs - ${appName}</title><style>body{background:#1e1e1e;color:#d4d4d4;font-family:monospace;padding:20px;}.header{position:sticky;top:0;background:#252526;padding:10px;border-bottom:1px solid #333;margin-bottom:15px;display:flex;justify-content:space-between;}a{color:#569cd6;text-decoration:none;font-weight:bold;}.log-line{white-space:pre-wrap;margin-bottom:4px;border-bottom:1px solid #2a2a2a;padding-bottom:2px;}</style></head><body><div class="header"><strong>Logs for ${appName}</strong><div><a href="/">Back</a> | <a href="/logs?app=${appName}">Refresh</a></div></div>${stats.logs.map(l => `<div class="log-line">${l}</div>`).join('')}<script>window.scrollTo(0, document.body.scrollHeight);</script></body></html>`);
   }
 
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
   const rows = appsConfig.map(app => {
     const stats = getAppStats(app.name);
+    const isOnline = stats.status === 'Online';
     return `<tr>
       <td style="padding:12px; border-bottom:1px solid #eee">${app.name}</td>
-      <td style="padding:12px; border-bottom:1px solid #eee; color: ${stats.status === 'Online' ? '#27ae60' : '#e74c3c'}"><strong>${stats.status}</strong></td>
+      <td style="padding:12px; border-bottom:1px solid #eee; color: ${isOnline ? '#27ae60' : (stats.shouldRun ? '#f39c12' : '#e74c3c')}"><strong>${stats.status}</strong></td>
       <td style="padding:12px; border-bottom:1px solid #eee"><span style="color:#2980b9">${stats.resources.cpu}</span> / <span style="color:#8e44ad">${stats.resources.ram}</span></td>
       <td style="padding:12px; border-bottom:1px solid #eee"><code style="color:${stats.git.dirty ? '#e67e22' : '#7f8c8d'}">${stats.git.branch}${stats.git.dirty ? '*' : ''}</code> <small>${stats.git.sync}</small></td>
       <td style="padding:12px; border-bottom:1px solid #eee">${stats.uptime}</td>
       <td style="padding:12px; border-bottom:1px solid #eee">
-        <a href="/restart?app=${app.name}" style="background:#3498db; color:white; padding:5px 10px; text-decoration:none; border-radius:3px; font-size:12px;">Restart</a>
+        ${isOnline 
+          ? `<a href="/stop?app=${app.name}" style="background:#e74c3c; color:white; padding:5px 10px; text-decoration:none; border-radius:3px; font-size:12px;">Stop</a>` 
+          : `<a href="/start?app=${app.name}" style="background:#2ecc71; color:white; padding:5px 10px; text-decoration:none; border-radius:3px; font-size:12px;">Start</a>`
+        }
+        <a href="/restart?app=${app.name}" style="background:#3498db; color:white; padding:5px 10px; text-decoration:none; border-radius:3px; font-size:12px; margin-left:5px;">Restart</a>
         <a href="/logs?app=${app.name}" style="background:#95a5a6; color:white; padding:5px 10px; text-decoration:none; border-radius:3px; font-size:12px; margin-left:5px;">Logs</a>
       </td>
     </tr>`;
   }).join('');
 
-  res.end(`
-    <!DOCTYPE html><html><head><title>Orchestrator Dashboard</title><meta http-equiv="refresh" content="10"><style>body{font-family:'Segoe UI',sans-serif;background:#f8f9fa;padding:40px;}.container{max-width:1200px;margin:auto;background:white;padding:30px;border-radius:8px;box-shadow:0 4px 15px rgba(0,0,0,0.05);}.header-flex{display:flex;justify-content:space-between;align-items:center;}table{width:100%;border-collapse:collapse;margin-top:20px;}th{text-align:left;background:#f1f3f5;padding:12px;border-bottom:2px solid #dee2e6;}.btn-all{background:#e67e22;color:white;padding:10px 20px;text-decoration:none;border-radius:5px;font-weight:bold;}</style></head>
-    <body><div class="container"><div class="header-flex"><h1>🚀 Orchestrator Dashboard</h1><a href="/restart-all" class="btn-all" onclick="return confirm('Restart all apps?')">Restart All Apps</a></div>
-    <table><thead><tr><th>Project</th><th>Status</th><th>CPU / RAM</th><th>Git</th><th>Uptime</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table>
-    <p><small>Master Uptime: ${Math.floor((Date.now() - startTime) / 1000)}s | Metrics update every 5s</small></p></div></body></html>
-  `);
+  res.end(`<!DOCTYPE html><html><head><title>Orchestrator Dashboard</title><meta http-equiv="refresh" content="10"><style>body{font-family:'Segoe UI',sans-serif;background:#f8f9fa;padding:40px;}.container{max-width:1200px;margin:auto;background:white;padding:30px;border-radius:8px;box-shadow:0 4px 15px rgba(0,0,0,0.05);}.header-flex{display:flex;justify-content:space-between;align-items:center;}table{width:100%;border-collapse:collapse;margin-top:20px;}th{text-align:left;background:#f1f3f5;padding:12px;border-bottom:2px solid #dee2e6;}.btn-all{background:#e67e22;color:white;padding:10px 20px;text-decoration:none;border-radius:5px;font-weight:bold;}</style></head><body><div class="container"><div class="header-flex"><h1>🚀 Orchestrator Dashboard</h1><a href="/restart-all" class="btn-all" onclick="return confirm('Restart all apps?')">Restart All Apps</a></div><table><thead><tr><th>Project</th><th>Status</th><th>CPU / RAM</th><th>Git</th><th>Uptime</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table><p><small>Master Uptime: ${Math.floor((Date.now() - startTime) / 1000)}s | Metrics update every 5s</small></p></div></body></html>`);
 });
 
 server.listen(WEB_PORT, () => process.stdout.write('\n'.repeat(appsConfig.length + 10)));
 
+function stopApp(name) {
+  const state = processes.get(name);
+  if (state) {
+    console.log(`\x1b[31m[Master] Stopping ${name}...\x1b[0m`);
+    state.shouldRun = false;
+    if (state.child) state.child.kill('SIGTERM');
+    renderDashboard();
+  }
+}
+
 function restartApp(name) {
   const state = processes.get(name);
   if (state) {
-    console.log(`\x1b[36m[Master] Requesting restart for ${name}...\x1b[0m`);
+    console.log(`\x1b[36m[Master] Restarting ${name}...\x1b[0m`);
+    state.shouldRun = true;
     if (state.child) { state.manualRestart = true; state.child.kill('SIGTERM'); } 
     else { startApp(state.config); }
   }
 }
+
 function startApp(config) {
   const existingState = processes.get(config.name) || { restarts: -1, logs: [], git: { branch: '...', dirty: false, sync: '' }, resources: { cpu: '0%', ram: '0MB' } };
-
-  // Search for .env: 1. In project directory, 2. In orchestrator directory as [name].env
-  let envFilePath = path.join(config.cwd || process.cwd(), '.env');
-  if (!fs.existsSync(envFilePath)) {
-    envFilePath = path.join(process.cwd(), `${config.name}.env`);
-  }
-
-  const dotEnv = parseEnvFile(envFilePath);
-
-  const newState = { ...existingState, restarts: existingState.restarts + 1, startTime: Date.now(), manualRestart: false, config };
+  const envFilePath = path.join(config.cwd || process.cwd(), '.env');
+  if (!fs.existsSync(envFilePath)) { /* fall back to local file */ }
+  const dotEnv = parseEnvFile(fs.existsSync(envFilePath) ? envFilePath : path.join(process.cwd(), `${config.name}.env`));
+  const newState = { ...existingState, shouldRun: true, restarts: existingState.restarts + 1, startTime: Date.now(), manualRestart: false, config };
   const args = config.args ? [config.script, ...(Array.isArray(config.args) ? config.args : config.args.split(' '))] : [config.script];
   const child = spawn(process.execPath, args, { cwd: config.cwd || process.cwd(), env: { ...process.env, ...dotEnv, ...config.env }, stdio: ['ignore', 'pipe', 'pipe'] });
-  
   newState.child = child;
   processes.set(config.name, newState);
   updateGitInfo(config.name);
-
   const addLog = (msg) => {
     const timestamp = new Date().toLocaleTimeString();
     newState.logs.push(`[${timestamp}] ${msg}`);
     if (newState.logs.length > MAX_LOG_LINES) newState.logs.shift();
   };
-
   const prefix = `\x1b[32m[${config.name}]\x1b[0m`;
   readline.createInterface({ input: child.stdout }).on('line', (line) => { console.log(`${prefix} ${line}`); addLog(line); });
   readline.createInterface({ input: child.stderr }).on('line', (line) => { console.error(`\x1b[31m[${config.name}]\x1b[0m ${line}`); addLog(`ERROR: ${line}`); });
-
   child.on('exit', (code, signal) => {
     const currentState = processes.get(config.name);
     console.log(`\x1b[33m[Master] ${config.name} exited (code: ${code}, signal: ${signal})\x1b[0m`);
     processes.set(config.name, { ...currentState, child: null, resources: { cpu: '0%', ram: '0MB' } });
-    if (!isShuttingDown && (currentState.manualRestart || (signal !== 'SIGTERM' && signal !== 'SIGKILL'))) {
+    if (!isShuttingDown && currentState.shouldRun && (currentState.manualRestart || (signal !== 'SIGTERM' && signal !== 'SIGKILL'))) {
       setTimeout(() => startApp(config), currentState.manualRestart ? 500 : 1500);
     }
     renderDashboard();
@@ -277,8 +255,12 @@ setInterval(() => appsConfig.forEach(app => { updateGitInfo(app.name); updateRes
 const rl = readline.createInterface({ input: process.stdin, terminal: false });
 rl.on('line', (line) => { 
   const input = line.trim();
+  const [cmd, name] = input.split(' ');
   if (input === 'list') renderDashboard();
   else if (input === 'git') appsConfig.forEach(app => updateGitInfo(app.name));
+  else if (cmd === 'stop' && name) stopApp(name);
+  else if (cmd === 'start' && name) { const c = appsConfig.find(a => a.name === name); if (c) startApp(c); }
+  else if (cmd === 'restart' && name) restartApp(name);
   else if (processes.has(input)) restartApp(input);
 });
 
