@@ -1,0 +1,22 @@
+# Environment variables
+.env
+*.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Node modules
+node_modules/
+
+# Test assets and temporary files
+tests/mocks/
+test_*.js
+!test_manual_restart.js
+
+# OS files
+.DS_Store
+Thumbs.db
