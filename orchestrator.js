@@ -17,6 +17,18 @@ const MAX_LOG_LINES = 100;
 // --- Utils ---
 const stripAnsi = (str) => str.replace(/\x1b\[[0-9;]*m/g, '');
 
+function formatUptime(seconds) {
+  if (seconds >= 3600) {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    return `${h}h ${m}m ${s}s`;
+  } else if (seconds >= 60) {
+    return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  }
+  return `${seconds}s`;
+}
+
 // --- Logique Environnement (.env) ---
 function parseEnvFile(filePath) {
   if (!fs.existsSync(filePath)) return {};
@@ -96,22 +108,12 @@ function getAppStats(name) {
   if (!procState) return null;
   const isOnline = procState.child && !procState.child.killed;
   const uptime = isOnline && procState.startTime ? Math.floor((Date.now() - procState.startTime) / 1000) : 0;
-  let uptimeStr;
-  if (uptime >= 3600) {
-    const h = Math.floor(uptime / 3600);
-    const m = Math.floor((uptime % 3600) / 60);
-    const s = uptime % 60;
-    uptimeStr = `${h}h ${m}m ${s}s`;
-  } else if (uptime >= 60) {
-    uptimeStr = `${Math.floor(uptime/60)}m ${uptime%60}s`;
-  } else {
-    uptimeStr = `${uptime}s`;
-  }
+  
   return {
     name,
     status: isOnline ? 'Online' : (procState.shouldRun ? 'Restarting' : 'Stopped'),
     restarts: procState.restarts || 0,
-    uptime: uptimeStr,
+    uptime: formatUptime(uptime),
     cpu: procState.resources?.cpu || '0%',
     ram: procState.resources?.ram || '0MB',
     git: procState.git || { branch: '-', dirty: false, sync: '' },
@@ -125,7 +127,7 @@ function renderDashboard() {
   if (isShuttingDown) return;
   process.stdout.write('\x1b[s\x1b[H'); 
   process.stdout.write('\x1b[1m\x1b[36m🚀 ORCHESTRATOR LIVE \x1b[0m | \x1b[2mhttp://localhost:' + WEB_PORT + '\x1b[0m\x1b[K\n');
-  process.stdout.write(`Uptime: ${Math.floor((Date.now() - startTime) / 1000)}s\x1b[K\n\n`);
+  process.stdout.write(`Uptime: ${formatUptime(Math.floor((Date.now() - startTime) / 1000))}\x1b[K\n\n`);
   const head = 'PROJECT'.padEnd(20) + 'STATUS'.padEnd(12) + 'CPU/RAM'.padEnd(18) + 'GIT'.padEnd(15) + 'RESTARTS';
   process.stdout.write('\x1b[1m\x1b[37m' + head + '\x1b[0m\x1b[K\n');
   process.stdout.write('\x1b[90m' + '─'.repeat(75) + '\x1b[0m\x1b[K\n');
@@ -152,7 +154,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ 
       apps: appsConfig.map(a => getAppStats(a.name)),
-      masterUptime: Math.floor((Date.now() - startTime) / 1000)
+      masterUptime: formatUptime(Math.floor((Date.now() - startTime) / 1000))
     }));
   }
 
@@ -232,7 +234,7 @@ const server = http.createServer((req, res) => {
         async function update() {
           const res = await fetch('/api/status');
           const data = await res.json();
-          document.getElementById('master-uptime').innerText = '| Uptime: ' + data.masterUptime + 's';
+          document.getElementById('master-uptime').innerText = '| Uptime: ' + data.masterUptime;
           
           const grid = document.getElementById('app-grid');
           grid.innerHTML = data.apps.map(app => \`
