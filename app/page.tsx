@@ -20,29 +20,31 @@ export default function DashboardPage() {
       setMasterUptime(data.masterUptime);
       setIsLoaded(true);
     };
-    es.onerror = () => es.close();
     return () => es.close();
   }, []);
 
   const handleAction = async (name: string, action: 'start' | 'stop' | 'restart') => {
-    await fetch(`/api/apps/${encodeURIComponent(name)}/action`, {
+    const res = await fetch(`/api/apps/${encodeURIComponent(name)}/action`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action }),
     });
+    if (!res.ok) console.error(`Action ${action} failed for ${name}`);
   };
 
   const handleUpdate = async (name: string, patch: Record<string, unknown>) => {
-    await fetch(`/api/apps/${encodeURIComponent(name)}`, {
+    const res = await fetch(`/api/apps/${encodeURIComponent(name)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
     });
+    if (!res.ok) console.error(`Update failed for ${name}`);
   };
 
   const handleDelete = async (name: string) => {
     if (!confirm(`Delete ${name}?`)) return;
-    await fetch(`/api/apps/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    const res = await fetch(`/api/apps/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    if (!res.ok) console.error(`Delete failed for ${name}`);
   };
 
   const handleAdd = async (data: { name: string; script: string; args: string[]; cwd: string }) => {

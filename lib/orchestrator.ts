@@ -147,7 +147,11 @@ export const orchestrator = {
   init(): void {
     if (initialized) return;
     initialized = true;
-    appsConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+    try {
+      appsConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+    } catch {
+      appsConfig = [];
+    }
     appsConfig.forEach(startProcess);
     setInterval(() => {
       appsConfig.forEach(app => {

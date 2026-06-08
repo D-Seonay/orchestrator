@@ -1,19 +1,8 @@
 import readline from 'readline';
 import { orchestrator } from '../lib/orchestrator';
+import { formatUptime } from '../lib/utils';
 
 const startTime = Date.now();
-
-function formatUptime(seconds: number): string {
-  if (seconds >= 3600) {
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
-    return `${h}h ${m}m ${s}s`;
-  } else if (seconds >= 60) {
-    return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-  }
-  return `${seconds}s`;
-}
 
 function renderDashboard() {
   process.stdout.write('\x1b[s\x1b[H');

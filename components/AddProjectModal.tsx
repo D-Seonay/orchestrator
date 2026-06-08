@@ -43,21 +43,24 @@ export default function AddProjectModal({ isOpen, onClose, onAdd }: Props) {
   return (
     <AnimatePresence>
       {isOpen && (
-        <>
-          <motion.div
-            className="fixed inset-0 bg-black/80 z-40"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={onClose}
-          />
-          <motion.div
-            className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md bg-zinc-950 border border-zinc-700 p-6"
-            initial={{ opacity: 0, scale: 0.9, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.9, y: 20 }}
-            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-          >
+        <motion.div
+          key="backdrop"
+          className="fixed inset-0 bg-black/80 z-40"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={onClose}
+        />
+      )}
+      {isOpen && (
+        <motion.div
+          key="modal"
+          className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md bg-zinc-950 border border-zinc-700 p-6"
+          initial={{ opacity: 0, scale: 0.9, y: 20 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.9, y: 20 }}
+          transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+        >
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-bold uppercase tracking-widest">NEW_DEPLOYMENT</h2>
               <button
@@ -100,8 +103,7 @@ export default function AddProjectModal({ isOpen, onClose, onAdd }: Props) {
                 {isSubmitting ? 'INITIATING...' : 'INITIATE_DEPLOYMENT'}
               </button>
             </form>
-          </motion.div>
-        </>
+        </motion.div>
       )}
     </AnimatePresence>
   );

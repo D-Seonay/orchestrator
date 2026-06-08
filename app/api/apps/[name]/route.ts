@@ -36,6 +36,11 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 export async function DELETE(_req: NextRequest, { params }: Params) {
   const { name } = await params;
   const appName = decodeURIComponent(name);
+
+  if (!orchestrator.getAppsConfig().find(a => a.name === appName)) {
+    return NextResponse.json({ error: 'App not found' }, { status: 404 });
+  }
+
   orchestrator.remove(appName);
   return NextResponse.json({ success: true });
 }
