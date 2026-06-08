@@ -156,284 +156,195 @@ function renderDashboard() {
 }
 
 // --- Serveur Web Dashboard ---
+const DIST_PATH = path.join(__dirname, 'dashboard', 'dist');
+const MIME_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript',
+  '.css': 'text/css',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.ico': 'image/x-icon',
+  '.json': 'application/json'
+};
+
 const server = http.createServer((req, res) => {
   const reqUrl = url.parse(req.url, true);
   const pathname = reqUrl.pathname;
-
-  // API Endpoints
-  if (pathname === '/api/status') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ 
-      apps: appsConfig.map(a => getAppStats(a.name)),
-      masterUptime: formatUptime(Math.floor((Date.now() - startTime) / 1000))
-    }));
-  }
-
-  if (pathname === '/api/action') {
-    const { app, action } = reqUrl.query;
-    if (action === 'restart-all') appsConfig.forEach(a => restartApp(a.name));
-    else if (action === 'restart') restartApp(app);
-    else if (action === 'stop') stopApp(app);
-    else if (action === 'start') { const c = appsConfig.find(a => a.name === app); if (c) startApp(c); }
-    res.writeHead(200); return res.end('OK');
-  }
-
-  // Project Management API
-  if (pathname === '/api/apps') {
-    if (req.method === 'GET') {
+  console.log(`Request: ${pathname}`);
+  if (pathname.startsWith('/api/')) {
+    if (pathname === '/api/status') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify(appsConfig));
+      return res.end(JSON.stringify({ 
+        apps: appsConfig.map(a => getAppStats(a.name)),
+        masterUptime: formatUptime(Math.floor((Date.now() - startTime) / 1000))
+      }));
     }
-    if (req.method === 'POST') {
-      let body = '';
-      req.on('data', chunk => { body += chunk; });
-      req.on('end', () => {
-        try {
-          const newApp = JSON.parse(body);
-          if (!newApp.name || !newApp.script) {
-            res.writeHead(400); return res.end('Missing name or script');
-          }
-          if (appsConfig.find(a => a.name === newApp.name)) {
-            res.writeHead(400); return res.end('App already exists');
-          }
-          if (newApp.cwd && !fs.existsSync(newApp.cwd)) {
-            res.writeHead(400); return res.end('CWD path does not exist');
-          }
-          const checkCwd = newApp.cwd || process.cwd();
-          if (newApp.script && !fs.existsSync(path.resolve(checkCwd, newApp.script))) {
-            res.writeHead(400); return res.end('Script path does not exist');
-          }
-          appsConfig.push(newApp);
-          saveConfig();
-          startApp(newApp);
-          res.writeHead(201); res.end('Created');
-        } catch (e) {
-          res.writeHead(400); res.end('Invalid JSON');
-        }
-      });
-      return;
+
+    if (pathname === '/api/action') {
+      const { app, action } = reqUrl.query;
+      if (action === 'restart-all') appsConfig.forEach(a => restartApp(a.name));
+      else if (action === 'restart') restartApp(app);
+      else if (action === 'stop') stopApp(app);
+      else if (action === 'start') { const c = appsConfig.find(a => a.name === app); if (c) startApp(c); }
+      res.writeHead(200); return res.end('OK');
     }
-  }
 
-  const appMatch = pathname.match(/^\/api\/apps\/(.+)$/);
-  if (appMatch) {
-    const appName = decodeURIComponent(appMatch[1]);
-    const appIndex = appsConfig.findIndex(a => a.name === appName);
-
-    if (appIndex !== -1) {
-      if (req.method === 'PATCH') {
+    // Project Management API
+    if (pathname === '/api/apps') {
+      if (req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(appsConfig));
+      }
+      if (req.method === 'POST') {
         let body = '';
         req.on('data', chunk => { body += chunk; });
         req.on('end', () => {
           try {
-            const updates = JSON.parse(body);
-            
-            if (updates.name && updates.name !== appName && appsConfig.find(a => a.name === updates.name)) {
-              res.writeHead(400); return res.end('App name already exists');
+            const newApp = JSON.parse(body);
+            if (!newApp.name || !newApp.script) {
+              res.writeHead(400); return res.end('Missing name or script');
             }
-
-            const currentApp = appsConfig[appIndex];
-            const finalCwd = (updates.cwd !== undefined ? updates.cwd : currentApp.cwd) || process.cwd();
-            if (updates.cwd && !fs.existsSync(updates.cwd)) {
+            if (appsConfig.find(a => a.name === newApp.name)) {
+              res.writeHead(400); return res.end('App already exists');
+            }
+            if (newApp.cwd && !fs.existsSync(newApp.cwd)) {
               res.writeHead(400); return res.end('CWD path does not exist');
             }
-
-            const checkScript = updates.script !== undefined ? updates.script : currentApp.script;
-            if (checkScript && !fs.existsSync(path.resolve(finalCwd, checkScript))) {
+            const checkCwd = newApp.cwd || process.cwd();
+            if (newApp.script && !fs.existsSync(path.resolve(checkCwd, newApp.script))) {
               res.writeHead(400); return res.end('Script path does not exist');
             }
-
-            const isRename = updates.name && updates.name !== appName;
-            
-            appsConfig[appIndex] = { ...appsConfig[appIndex], ...updates };
+            appsConfig.push(newApp);
             saveConfig();
-
-            if (isRename) {
-              const oldState = processes.get(appName);
-              if (oldState) {
-                const wasRunning = oldState.shouldRun;
-                
-                // Stop the old process and ensure it doesn't restart
-                oldState.shouldRun = false;
-                if (oldState.child) oldState.child.kill('SIGTERM');
-                
-                // Migrate the state to the new name so logs, restarts are preserved
-                const newState = {
-                  ...oldState,
-                  config: appsConfig[appIndex],
-                  shouldRun: wasRunning,
-                  child: null,
-                  restarts: wasRunning ? oldState.restarts - 1 : oldState.restarts // startApp will increment
-                };
-                
-                processes.set(updates.name, newState);
-                processes.delete(appName);
-
-                if (wasRunning) {
-                  startApp(appsConfig[appIndex]);
-                  // Restore original startTime that startApp just overwrote
-                  processes.get(updates.name).startTime = oldState.startTime;
-                }
-              }
-            } else {
-              const state = processes.get(appName);
-              if (state) {
-                state.config = appsConfig[appIndex];
-                restartApp(appName);
-              }
-            }
-
-            res.writeHead(200); res.end('Updated');
+            startApp(newApp);
+            res.writeHead(201); res.end('Created');
           } catch (e) {
             res.writeHead(400); res.end('Invalid JSON');
           }
         });
         return;
       }
-      if (req.method === 'DELETE') {
-        stopApp(appName);
-        appsConfig.splice(appIndex, 1);
-        processes.delete(appName);
-        saveConfig();
-        res.writeHead(200); res.end('Deleted');
-        return;
-      }
-    } else {
-      res.writeHead(404); return res.end('Not Found');
     }
+
+    const appMatch = pathname.match(/^\/api\/apps\/(.+)$/);
+    if (appMatch) {
+      const appName = decodeURIComponent(appMatch[1]);
+      const appIndex = appsConfig.findIndex(a => a.name === appName);
+
+      if (appIndex !== -1) {
+        if (req.method === 'PATCH') {
+          let body = '';
+          req.on('data', chunk => { body += chunk; });
+          req.on('end', () => {
+            try {
+              const updates = JSON.parse(body);
+              
+              if (updates.name && updates.name !== appName && appsConfig.find(a => a.name === updates.name)) {
+                res.writeHead(400); return res.end('App name already exists');
+              }
+
+              const currentApp = appsConfig[appIndex];
+              const finalCwd = (updates.cwd !== undefined ? updates.cwd : currentApp.cwd) || process.cwd();
+              if (updates.cwd && !fs.existsSync(updates.cwd)) {
+                res.writeHead(400); return res.end('CWD path does not exist');
+              }
+
+              const checkScript = updates.script !== undefined ? updates.script : currentApp.script;
+              if (checkScript && !fs.existsSync(path.resolve(finalCwd, checkScript))) {
+                res.writeHead(400); return res.end('Script path does not exist');
+              }
+
+              const isRename = updates.name && updates.name !== appName;
+              
+              appsConfig[appIndex] = { ...appsConfig[appIndex], ...updates };
+              saveConfig();
+
+              if (isRename) {
+                const oldState = processes.get(appName);
+                if (oldState) {
+                  const wasRunning = oldState.shouldRun;
+                  
+                  // Stop the old process and ensure it doesn't restart
+                  oldState.shouldRun = false;
+                  if (oldState.child) oldState.child.kill('SIGTERM');
+                  
+                  // Migrate the state to the new name so logs, restarts are preserved
+                  const newState = {
+                    ...oldState,
+                    config: appsConfig[appIndex],
+                    shouldRun: wasRunning,
+                    child: null,
+                    restarts: wasRunning ? oldState.restarts - 1 : oldState.restarts // startApp will increment
+                  };
+                  
+                  processes.set(updates.name, newState);
+                  processes.delete(appName);
+
+                  if (wasRunning) {
+                    startApp(appsConfig[appIndex]);
+                    // Restore original startTime that startApp just overwrote
+                    processes.get(updates.name).startTime = oldState.startTime;
+                  }
+                }
+              } else {
+                const state = processes.get(appName);
+                if (state) {
+                  state.config = appsConfig[appIndex];
+                  restartApp(appName);
+                }
+              }
+
+              res.writeHead(200); res.end('Updated');
+            } catch (e) {
+              res.writeHead(400); res.end('Invalid JSON');
+            }
+          });
+          return;
+        }
+        if (req.method === 'DELETE') {
+          stopApp(appName);
+          appsConfig.splice(appIndex, 1);
+          processes.delete(appName);
+          saveConfig();
+          res.writeHead(200); res.end('Deleted');
+          return;
+        }
+      }
+    }
+    
+    // Fallback for non-existent API routes
+    res.writeHead(404);
+    return res.end(JSON.stringify({ error: 'API route not found' }));
   }
 
-  // HTML UI
-  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-  res.end(`
-    <!DOCTYPE html>
-    <html lang="fr">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Orchestrator Pro</title>
-      <style>
-        :root { --bg: #0f172a; --card: #1e293b; --text: #f1f5f9; --primary: #3b82f6; --success: #10b981; --danger: #ef4444; --warning: #f59e0b; }
-        body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; line-height: 1.5; }
-        .container { max-width: 1100px; margin: 0 auto; }
-        header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; background: var(--card); padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
-        h1 { margin: 0; font-size: 1.5rem; display: flex; align-items: center; gap: 10px; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 20px; }
-        .card { background: var(--card); border-radius: 12px; padding: 20px; transition: transform 0.2s; border: 1px solid rgba(255,255,255,0.05); }
-        .card:hover { transform: translateY(-4px); box-shadow: 0 10px 15px -3px rgba(0,0,0,0.2); }
-        .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px; }
-        .app-name { font-weight: 700; font-size: 1.1rem; }
-        .status-badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
-        .status-Online { background: rgba(16,185,129,0.1); color: var(--success); border: 1px solid var(--success); }
-        .status-Stopped { background: rgba(239,68,68,0.1); color: var(--danger); border: 1px solid var(--danger); }
-        .status-Restarting { background: rgba(245,158,11,0.1); color: var(--warning); border: 1px solid var(--warning); }
-        .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; }
-        .metric { background: rgba(0,0,0,0.2); padding: 8px; border-radius: 8px; text-align: center; }
-        .metric-label { font-size: 0.7rem; color: #94a3b8; display: block; }
-        .metric-value { font-weight: 600; font-size: 0.9rem; }
-        .git-info { font-size: 0.8rem; background: rgba(59,130,246,0.1); padding: 8px; border-radius: 8px; margin-bottom: 15px; color: #93c5fd; }
-        .actions { display: flex; gap: 8px; }
-        button, .btn { cursor: pointer; border: none; padding: 8px 12px; border-radius: 6px; font-size: 0.8rem; font-weight: 600; color: white; display: flex; align-items: center; gap: 5px; transition: opacity 0.2s; text-decoration: none; }
-        button:hover { opacity: 0.8; }
-        .btn-start { background: var(--success); }
-        .btn-stop { background: var(--danger); }
-        .btn-restart { background: var(--primary); }
-        .btn-logs { background: #64748b; }
-        .btn-all { background: var(--warning); padding: 10px 20px; font-size: 0.9rem; }
-        #logs-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 100; padding: 40px; }
-        .modal-content { background: #1e1e1e; height: 100%; border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; }
-        .modal-header { padding: 15px 20px; background: #252526; display: flex; justify-content: space-between; border-bottom: 1px solid #333; }
-        #logs-body { flex: 1; padding: 20px; overflow-y: auto; font-family: 'Fira Code', monospace; font-size: 0.85rem; color: #d4d4d4; white-space: pre-wrap; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <header>
-          <h1>🚀 Orchestrator Live <span id="master-uptime" style="font-size: 0.9rem; font-weight: 400; opacity: 0.7;"></span></h1>
-          <button class="btn-all" onclick="doAction('', 'restart-all')">🔄 Restart All Apps</button>
-        </header>
-        <div id="app-grid" class="grid"></div>
-      </div>
+  // --- Static Files & SPA Routing ---
+  let filePath = path.join(DIST_PATH, pathname === '/' ? 'index.html' : pathname);
+  
+  // Handle Single Page Application (SPA) routing: if file doesn't exist, serve index.html
+  if (!fs.existsSync(filePath)) {
+    filePath = path.join(DIST_PATH, 'index.html');
+  }
 
-      <div id="logs-modal" onclick="closeLogs()">
-        <div class="modal-content" onclick="event.stopPropagation()">
-          <div class="modal-header">
-            <span id="modal-title" style="font-weight: bold;">Logs</span>
-            <button onclick="closeLogs()" style="background: transparent; font-size: 1.2rem;">&times;</button>
-          </div>
-          <div id="logs-body"></div>
-        </div>
-      </div>
+  // Final check: if even index.html is missing, return 404
+  if (!fs.existsSync(filePath)) {
+    res.writeHead(404);
+    return res.end('Not Found');
+  }
 
-      <script>
-        let currentLogsApp = null;
-        async function update() {
-          const res = await fetch('/api/status');
-          const data = await res.json();
-          document.getElementById('master-uptime').innerText = '| Uptime: ' + data.masterUptime;
-          
-          const grid = document.getElementById('app-grid');
-          grid.innerHTML = data.apps.map(app => \`
-            <div class="card">
-              <div class="card-header">
-                <div class="app-name">\${app.name}</div>
-                <span class="status-badge status-\${app.status}">\${app.status}</span>
-              </div>
-              <div class="metrics">
-                <div class="metric"><span class="metric-label">CPU</span><span class="metric-value">\${app.cpu}</span></div>
-                <div class="metric"><span class="metric-label">RAM</span><span class="metric-value">\${app.ram}</span></div>
-                <div class="metric"><span class="metric-label">RESTARTS</span><span class="metric-value">\${app.restarts}</span></div>
-                <div class="metric"><span class="metric-label">UPTIME</span><span class="metric-value">\${app.uptime}</span></div>
-              </div>
-              <div class="git-info">
-                🌳 <b>\${app.git.branch}\${app.git.dirty ? '*' : ''}</b> \${app.git.sync}
-              </div>
-              <div class="actions">
-                \${app.status === 'Online' 
-                  ? \`<button class="btn-stop" onclick="doAction('\${app.name}', 'stop')">⏹ Stop</button>\`
-                  : \`<button class="btn-start" onclick="doAction('\${app.name}', 'start')">▶ Start</button>\`
-                }
-                <button class="btn-restart" onclick="doAction('\${app.name}', 'restart')">🔄 Restart</button>
-                <button class="btn-logs" onclick="showLogs('\${app.name}')">📄 Logs</button>
-              </div>
-            </div>
-          \`).join('');
+  const ext = path.extname(filePath).toLowerCase();
+  const contentType = MIME_TYPES[ext] || 'application/octet-stream';
 
-          if (currentLogsApp) {
-            const app = data.apps.find(a => a.name === currentLogsApp);
-            if (app) {
-              const body = document.getElementById('logs-body');
-              const shouldScroll = body.scrollTop + body.clientHeight >= body.scrollHeight - 20;
-              body.innerText = app.logs.join('\\n');
-              if (shouldScroll) body.scrollTop = body.scrollHeight;
-            }
-          }
-        }
-
-        async function doAction(app, action) {
-          if (action === 'restart-all' && !confirm('Restart all projects?')) return;
-          await fetch(\`/api/action?app=\${app}&action=\${action}\`);
-          update();
-        }
-
-        function showLogs(name) {
-          currentLogsApp = name;
-          document.getElementById('modal-title').innerText = 'Logs: ' + name;
-          document.getElementById('logs-modal').style.display = 'block';
-          update();
-        }
-
-        function closeLogs() {
-          currentLogsApp = null;
-          document.getElementById('logs-modal').style.display = 'none';
-        }
-
-        setInterval(update, 2000);
-        update();
-      </script>
-    </body>
-    </html>
-  `);
+  fs.readFile(filePath, (err, content) => {
+    if (err) {
+      res.writeHead(500);
+      res.end(`Server Error: ${err.code}`);
+    } else {
+      res.writeHead(200, { 'Content-Type': contentType });
+      res.end(content, 'utf-8');
+    }
+  });
 });
 
 server.listen(WEB_PORT, () => process.stdout.write('\n'.repeat(appsConfig.length + 10)));
