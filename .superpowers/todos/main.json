@@ -22,16 +22,16 @@
   {
     "id": 5,
     "task": "Brutalist UI Components",
-    "status": "pending"
+    "status": "complete"
   },
   {
     "id": 6,
     "task": "Project Management UI",
-    "status": "pending"
+    "status": "complete"
   },
   {
     "id": 7,
     "task": "Final Integration",
-    "status": "pending"
+    "status": "complete"
   }
 ]

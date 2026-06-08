@@ -1,67 +1,79 @@
-const { spawn } = require('child_process');
-const path = require('path');
-const readline = require('readline');
+const http = require('http');
 
-const orchestratorPath = path.join(__dirname, '..', 'orchestrator.js');
-const orchestrator = spawn('node', [orchestratorPath], {
-  cwd: path.join(__dirname, '..'),
-  stdio: ['pipe', 'pipe', 'pipe']
-});
+async function test() {
+  console.log('--- Testing Project Management API ---');
 
-const rl = readline.createInterface({
-  input: orchestrator.stdout,
-  terminal: false
-});
+  const postData = JSON.stringify({
+    name: 'test-app',
+    script: 'tests/test-app/app.js',
+    cwd: process.cwd()
+  });
 
-const stripAnsi = (str) => str.replace(/\x1b\[[0-9;]*m/g, '');
+  // 1. Create App
+  console.log('1. Creating app...');
+  await request('/api/apps', 'POST', postData);
 
-let state = 'WAITING_FOR_START';
-let timeout = setTimeout(() => {
-  console.error('Test timed out in state:', state);
-  orchestrator.kill();
+  // Wait for it to start and produce some logs
+  await new Promise(r => setTimeout(r, 2000));
+
+  // 2. Check Status & Logs
+  console.log('2. Checking status...');
+  let status = await request('/api/status', 'GET');
+  let app = status.apps.find(a => a.name === 'test-app');
+  console.log(`   App: ${app.name}, Status: ${app.status}, Logs: ${app.logs.length}`);
+  if (app.logs.length === 0) throw new Error('No logs found');
+
+  // 3. Rename App
+  console.log('3. Renaming app...');
+  await request('/api/apps/test-app', 'PATCH', JSON.stringify({ name: 'test-app-v2' }));
+
+  // Wait for restart
+  await new Promise(r => setTimeout(r, 2000));
+
+  // 4. Check Status & Logs again
+  console.log('4. Checking status after rename...');
+  status = await request('/api/status', 'GET');
+  app = status.apps.find(a => a.name === 'test-app-v2');
+  const oldApp = status.apps.find(a => a.name === 'test-app');
+
+  if (oldApp) throw new Error('Old app name still exists in status!');
+  if (!app) throw new Error('New app name not found!');
+  
+  console.log(`   App: ${app.name}, Status: ${app.status}, Logs: ${app.logs.length}`);
+  if (app.logs.length === 0) throw new Error('Logs lost after rename!');
+
+  console.log('--- Test Passed! ---');
+}
+
+function request(path, method, data) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      hostname: 'localhost',
+      port: 4444,
+      path,
+      method,
+      headers: data ? { 'Content-Type': 'application/json', 'Content-Length': data.length } : {}
+    }, res => {
+      let body = '';
+      res.on('data', chunk => body += chunk);
+      res.on('end', () => {
+        if (res.statusCode >= 400) reject(new Error(`HTTP ${res.statusCode}: ${body}`));
+        else {
+          try {
+            resolve(body ? JSON.parse(body) : null);
+          } catch (e) {
+            resolve(body);
+          }
+        }
+      });
+    });
+    req.on('error', reject);
+    if (data) req.write(data);
+    req.end();
+  });
+}
+
+test().catch(err => {
+  console.error('Test Failed:', err.message);
   process.exit(1);
-}, 10000);
-
-rl.on('line', (line) => {
-  const cleanLine = stripAnsi(line);
-  console.log('OUTPUT:', cleanLine);
-
-  if (state === 'WAITING_FOR_START' && cleanLine.includes('[app1] App 1 started')) {
-    console.log('Detected app1 started. Sending restart command...');
-    state = 'WAITING_FOR_RESTART_MSG';
-    orchestrator.stdin.write('app1\n');
-  } else if (state === 'WAITING_FOR_RESTART_MSG' && cleanLine.includes('[Master] Manually restarting app1...')) {
-    console.log('Detected manual restart message.');
-    state = 'WAITING_FOR_EXIT';
-  } else if (state === 'WAITING_FOR_EXIT' && cleanLine.includes('[Master] app1 exited')) {
-    console.log('Detected app1 exit.');
-    state = 'WAITING_FOR_RESTART_START';
-  } else if (state === 'WAITING_FOR_RESTART_START' && cleanLine.includes('[Master] Starting app1...')) {
-    console.log('Detected app1 starting again.');
-    state = 'WAITING_FOR_SECOND_START';
-  } else if (state === 'WAITING_FOR_SECOND_START' && cleanLine.includes('[app1] App 1 started')) {
-    console.log('Detected app1 started again. SUCCESS!');
-    clearTimeout(timeout);
-    orchestrator.kill();
-    process.exit(0);
-  }
-});
-
-orchestrator.stderr.on('data', (data) => {
-  console.error('STDERR:', stripAnsi(data.toString()));
-});
-
-orchestrator.on('exit', (code) => {
-  if (state !== 'WAITING_FOR_SECOND_START' || code !== 0) {
-    // If it exited but we weren't done, it's a failure unless we just killed it
-    if (state !== 'FINISHED') {
-        console.error('Orchestrator exited unexpectedly with code:', code);
-        process.exit(1);
-    }
-  }
-});
-
-// Helper to track if we finished
-rl.on('close', () => {
-    state = 'FINISHED';
 });

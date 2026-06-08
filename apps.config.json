@@ -19,5 +19,26 @@
     "name": "stock-semaphore",
     "script": "app.js",
     "cwd": "C:/Repositories/AtoolDev/semaphore/stock-semaphore"
+  },
+  {
+    "name": "invalid-app",
+    "script": "non-existent-script.js"
+  },
+  {
+    "name": "other-app",
+    "script": "C:\\Repositories\\AtoolDev\\my-dashboard\\tests\\test-app2.js"
+  },
+  {
+    "name": "test-ttt5tx-invalid-app",
+    "script": "non-existent-script.js"
+  },
+  {
+    "name": "test-ttt5tx-other-app",
+    "script": "C:\\Repositories\\AtoolDev\\my-dashboard\\tests\\test-ttt5tx-app2.js"
+  },
+  {
+    "name": "test-app-v2",
+    "script": "tests/test-app/app.js",
+    "cwd": "C:\\Repositories\\AtoolDev\\my-dashboard"
   }
 ]

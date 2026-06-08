@@ -1,0 +1,1 @@
+console.log('Test app started'); setInterval(() => console.log('Heartbeat'), 1000);
