@@ -23,6 +23,8 @@ interface ProcessState {
   resources: { cpu: string; ram: string };
   lastUsage?: { time: number; cpuTime: number };
   buildState?: 'building' | 'ready';
+  crashTimes: number[];
+  circuitOpen: boolean;
 }
 
 // Global state survives Next.js hot reloads and module isolation between
@@ -126,6 +128,8 @@ function startProcess(config: AppConfig): void {
     startTime: Date.now(),
     manualRestart: false,
     buildState: undefined,
+    crashTimes: (base as ProcessState).crashTimes ?? [],
+    circuitOpen: false, // always reset on explicit start
   };
 
   const args = config.args
@@ -158,12 +162,37 @@ function startProcess(config: AppConfig): void {
   child.on('exit', (_code, signal) => {
     const currentState = S.processes.get(config.name);
     if (!currentState || currentState.child !== child) return;
-    S.processes.set(config.name, { ...currentState, child: null, resources: { cpu: '0%', ram: '0MB' } });
-    if (
-      currentState.shouldRun &&
-      (currentState.manualRestart || (signal !== 'SIGTERM' && signal !== 'SIGKILL'))
-    ) {
-      setTimeout(() => startProcess(currentState.config), currentState.manualRestart ? 500 : 1500);
+
+    const isManual = currentState.manualRestart;
+    const isExplicitKill = signal === 'SIGTERM' || signal === 'SIGKILL';
+    const isCrash = currentState.shouldRun && !isManual && !isExplicitKill;
+
+    const now = Date.now();
+    const WINDOW_MS = 60_000;
+    const CRASH_THRESHOLD = 5;
+
+    let crashTimes = currentState.crashTimes ?? [];
+    let circuitOpen = currentState.circuitOpen ?? false;
+
+    if (isCrash && !circuitOpen) {
+      crashTimes = [...crashTimes.filter(t => now - t < WINDOW_MS), now];
+      if (crashTimes.length >= CRASH_THRESHOLD) {
+        circuitOpen = true;
+      }
+    }
+
+    const newState = { ...currentState, child: null, resources: { cpu: '0%', ram: '0MB' }, crashTimes, circuitOpen };
+    S.processes.set(config.name, newState);
+
+    if (circuitOpen && isCrash) {
+      const ts = new Date().toLocaleTimeString();
+      newState.logs.push(`[${ts}] ⚡ CIRCUIT BREAKER: ${crashTimes.length} crashes en 60s — redémarrage automatique suspendu. Reset manuel requis.`);
+      if (newState.logs.length > MAX_LOG_LINES) newState.logs.shift();
+      return;
+    }
+
+    if (currentState.shouldRun && (isManual || !isExplicitKill)) {
+      setTimeout(() => startProcess(currentState.config), isManual ? 500 : 1500);
     }
   });
 }
@@ -278,6 +307,7 @@ export const orchestrator = {
         group: app.group,
         status: (isOnline
           ? (state.buildState === 'building' ? 'Building' : 'Online')
+          : state.circuitOpen ? 'Crashed'
           : state.shouldRun ? 'Restarting' : 'Stopped') as AppStats['status'],
         restarts: state.restarts || 0,
         uptime: formatUptime(uptime),

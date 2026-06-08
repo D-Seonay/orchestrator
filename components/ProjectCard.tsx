@@ -29,10 +29,12 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
 
   const isOnline = project.status === 'Online';
   const isBuilding = project.status === 'Building';
+  const isCrashed = project.status === 'Crashed';
   const statusColor =
     isOnline ? 'text-green-400'
     : isBuilding ? 'text-cyan-400'
     : project.status === 'Restarting' ? 'text-yellow-400'
+    : isCrashed ? 'text-red-500'
     : 'text-red-400';
 
   const envCount = Object.keys(project.env || {}).length;
@@ -77,7 +79,7 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
         </h2>
         <motion.span
           className={`text-xs uppercase ${statusColor}`}
-          animate={(isOnline || isBuilding) ? { opacity: [0.5, 1, 0.5] } : { opacity: 1 }}
+          animate={(isOnline || isBuilding) ? { opacity: [0.5, 1, 0.5] } : isCrashed ? { opacity: 1 } : { opacity: 1 }}
           transition={(isOnline || isBuilding) ? { repeat: Infinity, duration: isBuilding ? 1 : 3 } : {}}
         >
           ● {project.status}
@@ -212,6 +214,19 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
           <div className="text-xs text-zinc-300">{project.restarts}</div>
         </div>
       </div>
+
+      {/* Circuit breaker banner */}
+      {isCrashed && (
+        <div className="border border-red-900 bg-red-950/30 px-3 py-2 flex items-center justify-between gap-2">
+          <span className="text-red-400 text-xs">⚡ Circuit ouvert — 5 crashes en 60s</span>
+          <button
+            onClick={() => onAction('restart')}
+            className="text-xs border border-red-700 px-3 py-1 text-red-400 hover:border-red-400 hover:text-white transition-colors uppercase shrink-0"
+          >
+            RESET
+          </button>
+        </div>
+      )}
 
       {/* Footer */}
       <div className="flex items-center justify-between">
