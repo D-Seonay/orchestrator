@@ -21,19 +21,34 @@ interface ProcessState {
   lastUsage?: { time: number; cpuTime: number };
 }
 
-let appsConfig: AppConfig[] = [];
-const processes = new Map<string, ProcessState>();
-const masterStartTime = Date.now();
-let initialized = false;
+// Global state survives Next.js hot reloads and module isolation between
+// instrumentation.ts and API route handlers in development.
+const g = globalThis as typeof globalThis & {
+  __orch?: {
+    appsConfig: AppConfig[];
+    processes: Map<string, ProcessState>;
+    masterStartTime: number;
+    initialized: boolean;
+  };
+};
+if (!g.__orch) {
+  g.__orch = {
+    appsConfig: [],
+    processes: new Map(),
+    masterStartTime: Date.now(),
+    initialized: false,
+  };
+}
+const S = g.__orch;
 
 function saveConfig(): void {
   const tempPath = `${CONFIG_PATH}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(appsConfig, null, 2), 'utf8');
+  fs.writeFileSync(tempPath, JSON.stringify(S.appsConfig, null, 2), 'utf8');
   fs.renameSync(tempPath, CONFIG_PATH);
 }
 
 function updateGitInfo(name: string): void {
-  const state = processes.get(name);
+  const state = S.processes.get(name);
   if (!state || !state.config.cwd) return;
   const cmd = 'git rev-parse --abbrev-ref HEAD && git status --porcelain && git rev-list --left-right --count HEAD...@{u}';
   exec(cmd, { cwd: state.config.cwd }, (err, stdout) => {
@@ -57,7 +72,7 @@ function updateGitInfo(name: string): void {
 }
 
 function updateResourceUsage(name: string): void {
-  const state = processes.get(name);
+  const state = S.processes.get(name);
   if (!state || !state.child || state.child.killed || !state.child.pid) {
     if (state) state.resources = { cpu: '0%', ram: '0MB' };
     return;
@@ -85,7 +100,7 @@ function updateResourceUsage(name: string): void {
 }
 
 function startProcess(config: AppConfig): void {
-  const existing = processes.get(config.name);
+  const existing = S.processes.get(config.name);
   const base = existing ?? {
     restarts: -1,
     logs: [],
@@ -119,7 +134,7 @@ function startProcess(config: AppConfig): void {
   });
 
   state.child = child;
-  processes.set(config.name, state);
+  S.processes.set(config.name, state);
   updateGitInfo(config.name);
 
   const addLog = (msg: string) => {
@@ -132,9 +147,9 @@ function startProcess(config: AppConfig): void {
   readline.createInterface({ input: child.stderr! }).on('line', line => addLog(`ERROR: ${line}`));
 
   child.on('exit', (_code, signal) => {
-    const currentState = processes.get(config.name);
+    const currentState = S.processes.get(config.name);
     if (!currentState || currentState.child !== child) return;
-    processes.set(config.name, { ...currentState, child: null, resources: { cpu: '0%', ram: '0MB' } });
+    S.processes.set(config.name, { ...currentState, child: null, resources: { cpu: '0%', ram: '0MB' } });
     if (
       currentState.shouldRun &&
       (currentState.manualRestart || (signal !== 'SIGTERM' && signal !== 'SIGKILL'))
@@ -146,16 +161,16 @@ function startProcess(config: AppConfig): void {
 
 export const orchestrator = {
   init(): void {
-    if (initialized) return;
-    initialized = true;
+    if (S.initialized) return;
+    S.initialized = true;
     try {
-      appsConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+      S.appsConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
     } catch {
-      appsConfig = [];
+      S.appsConfig = [];
     }
-    appsConfig.forEach(startProcess);
+    S.appsConfig.forEach(startProcess);
     setInterval(() => {
-      appsConfig.forEach(app => {
+      S.appsConfig.forEach(app => {
         updateGitInfo(app.name);
         updateResourceUsage(app.name);
       });
@@ -163,7 +178,7 @@ export const orchestrator = {
   },
 
   start(name: string): void {
-    const state = processes.get(name);
+    const state = S.processes.get(name);
     if (state) {
       state.shouldRun = true;
       if (!state.child || state.child.killed) startProcess(state.config);
@@ -171,7 +186,7 @@ export const orchestrator = {
   },
 
   stop(name: string): void {
-    const state = processes.get(name);
+    const state = S.processes.get(name);
     if (state) {
       state.shouldRun = false;
       state.child?.kill('SIGTERM');
@@ -179,7 +194,7 @@ export const orchestrator = {
   },
 
   restart(name: string): void {
-    const state = processes.get(name);
+    const state = S.processes.get(name);
     if (state) {
       state.shouldRun = true;
       if (state.child) {
@@ -192,39 +207,39 @@ export const orchestrator = {
   },
 
   add(config: AppConfig): void {
-    appsConfig.push(config);
+    S.appsConfig.push(config);
     saveConfig();
     startProcess(config);
   },
 
   update(name: string, patch: Partial<AppConfig>): void {
-    const index = appsConfig.findIndex(a => a.name === name);
+    const index = S.appsConfig.findIndex(a => a.name === name);
     if (index === -1) return;
 
     const isRename = patch.name && patch.name !== name;
-    appsConfig[index] = { ...appsConfig[index], ...patch };
+    S.appsConfig[index] = { ...S.appsConfig[index], ...patch };
     saveConfig();
 
     if (isRename) {
-      const oldState = processes.get(name);
+      const oldState = S.processes.get(name);
       if (oldState) {
         const wasRunning = oldState.shouldRun;
         oldState.shouldRun = false;
         oldState.child?.kill('SIGTERM');
-        processes.set(patch.name!, {
+        S.processes.set(patch.name!, {
           ...oldState,
-          config: appsConfig[index],
+          config: S.appsConfig[index],
           shouldRun: wasRunning,
           child: null,
           restarts: wasRunning ? oldState.restarts - 1 : oldState.restarts,
         });
-        processes.delete(name);
-        if (wasRunning) startProcess(appsConfig[index]);
+        S.processes.delete(name);
+        if (wasRunning) startProcess(S.appsConfig[index]);
       }
     } else {
-      const state = processes.get(name);
+      const state = S.processes.get(name);
       if (state) {
-        state.config = appsConfig[index];
+        state.config = S.appsConfig[index];
         this.restart(name);
       }
     }
@@ -232,14 +247,14 @@ export const orchestrator = {
 
   remove(name: string): void {
     this.stop(name);
-    appsConfig = appsConfig.filter(a => a.name !== name);
-    processes.delete(name);
+    S.appsConfig = S.appsConfig.filter(a => a.name !== name);
+    S.processes.delete(name);
     saveConfig();
   },
 
   getStats(): AppStats[] {
-    return appsConfig.map(app => {
-      const state = processes.get(app.name);
+    return S.appsConfig.map(app => {
+      const state = S.processes.get(app.name);
       if (!state) return null;
       const isOnline = !!state.child && !state.child.killed;
       const uptime = isOnline && state.startTime
@@ -250,6 +265,7 @@ export const orchestrator = {
         script: app.script,
         args: app.args,
         cwd: app.cwd,
+        env: app.env,
         status: (isOnline ? 'Online' : state.shouldRun ? 'Restarting' : 'Stopped') as AppStats['status'],
         restarts: state.restarts || 0,
         uptime: formatUptime(uptime),
@@ -263,10 +279,10 @@ export const orchestrator = {
   },
 
   getMasterUptime(): string {
-    return formatUptime(Math.floor((Date.now() - masterStartTime) / 1000));
+    return formatUptime(Math.floor((Date.now() - S.masterStartTime) / 1000));
   },
 
   getAppsConfig(): AppConfig[] {
-    return appsConfig;
+    return S.appsConfig;
   },
 };

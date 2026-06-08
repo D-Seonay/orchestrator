@@ -6,7 +6,7 @@ export interface AppConfig {
   env?: Record<string, string>;
 }
 
-export interface AppStats extends Omit<AppConfig, 'env'> {
+export interface AppStats extends AppConfig {
   status: 'Online' | 'Stopped' | 'Restarting';
   restarts: number;
   uptime: string;

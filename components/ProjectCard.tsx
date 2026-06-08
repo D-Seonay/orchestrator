@@ -7,7 +7,7 @@ import type { AppStats } from '@/types';
 interface Props {
   project: AppStats;
   onAction: (action: 'start' | 'stop' | 'restart') => void;
-  onUpdate: (patch: { script?: string; args?: string[]; cwd?: string }) => void;
+  onUpdate: (patch: { script?: string; args?: string[]; cwd?: string; env?: Record<string, string> }) => void;
   onDelete: () => void;
 }
 
@@ -18,6 +18,9 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
     args: (Array.isArray(project.args) ? project.args : project.args ? [project.args] : []).join(' '),
     cwd: project.cwd || '',
   });
+  const [envEntries, setEnvEntries] = useState<{ key: string; value: string }[]>(
+    Object.entries(project.env || {}).map(([k, v]) => ({ key: k, value: v }))
+  );
 
   const isOnline = project.status === 'Online';
   const statusColor = isOnline
@@ -26,12 +29,28 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
     ? 'text-yellow-400'
     : 'text-red-400';
 
+  const envCount = Object.keys(project.env || {}).length;
+
   const handleSave = () => {
+    const env = Object.fromEntries(
+      envEntries.filter(e => e.key.trim() !== '').map(e => [e.key.trim(), e.value])
+    );
     onUpdate({
       script: editData.script,
       args: editData.args.split(' ').filter(Boolean),
       cwd: editData.cwd,
+      env,
     });
+    setIsEditing(false);
+  };
+
+  const handleCancel = () => {
+    setEditData({
+      script: project.script || '',
+      args: (Array.isArray(project.args) ? project.args : project.args ? [project.args] : []).join(' '),
+      cwd: project.cwd || '',
+    });
+    setEnvEntries(Object.entries(project.env || {}).map(([k, v]) => ({ key: k, value: v })));
     setIsEditing(false);
   };
 
@@ -74,6 +93,7 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
       >
         {isEditing ? (
           <div className="flex flex-col gap-2" onClick={e => e.stopPropagation()}>
+            {/* Script / Args / CWD */}
             {(
               [
                 { label: 'SCRIPT', key: 'script' as const },
@@ -92,6 +112,56 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
                 />
               </div>
             ))}
+
+            {/* ENV VARIABLES */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-zinc-500 text-xs uppercase tracking-widest">ENV_VARS</label>
+                <button
+                  onClick={() => setEnvEntries([...envEntries, { key: '', value: '' }])}
+                  className="text-xs text-zinc-500 hover:text-white transition-colors"
+                >
+                  + ADD
+                </button>
+              </div>
+              <div className="flex flex-col gap-1">
+                {envEntries.map((entry, i) => (
+                  <div key={i} className="flex gap-1 items-center">
+                    <input
+                      placeholder="KEY"
+                      className="w-2/5 bg-black border border-zinc-700 px-2 py-1 text-xs text-white focus:outline-none focus:border-zinc-400 placeholder-zinc-700"
+                      value={entry.key}
+                      onChange={e => {
+                        const next = [...envEntries];
+                        next[i] = { ...next[i], key: e.target.value };
+                        setEnvEntries(next);
+                      }}
+                    />
+                    <span className="text-zinc-600 text-xs">=</span>
+                    <input
+                      placeholder="value"
+                      className="flex-1 bg-black border border-zinc-700 px-2 py-1 text-xs text-white focus:outline-none focus:border-zinc-400 placeholder-zinc-700"
+                      value={entry.value}
+                      onChange={e => {
+                        const next = [...envEntries];
+                        next[i] = { ...next[i], value: e.target.value };
+                        setEnvEntries(next);
+                      }}
+                    />
+                    <button
+                      onClick={() => setEnvEntries(envEntries.filter((_, j) => j !== i))}
+                      className="text-zinc-600 hover:text-red-400 transition-colors text-xs px-1"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+                {envEntries.length === 0 && (
+                  <span className="text-zinc-700 text-xs italic">no env vars</span>
+                )}
+              </div>
+            </div>
+
             <div className="flex gap-2 mt-1">
               <button
                 onClick={handleSave}
@@ -100,7 +170,7 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
                 SAVE
               </button>
               <button
-                onClick={() => setIsEditing(false)}
+                onClick={handleCancel}
                 className="text-xs text-zinc-500 hover:text-white transition-colors uppercase"
               >
                 CANCEL
@@ -125,6 +195,12 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
                 {project.git.sync ? ` ${project.git.sync}` : ''}
               </span>
             </div>
+            {envCount > 0 && (
+              <div className="flex justify-between gap-2">
+                <span className="text-zinc-500 text-xs uppercase tracking-widest shrink-0">ENV_VARS</span>
+                <span className="text-xs text-zinc-500">{envCount} var{envCount > 1 ? 's' : ''}</span>
+              </div>
+            )}
           </>
         )}
       </div>
