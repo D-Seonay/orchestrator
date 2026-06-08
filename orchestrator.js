@@ -96,7 +96,17 @@ function getAppStats(name) {
   if (!procState) return null;
   const isOnline = procState.child && !procState.child.killed;
   const uptime = isOnline && procState.startTime ? Math.floor((Date.now() - procState.startTime) / 1000) : 0;
-  const uptimeStr = uptime > 60 ? `${Math.floor(uptime/60)}m ${uptime%60}s` : `${uptime}s`;
+  let uptimeStr;
+  if (uptime >= 3600) {
+    const h = Math.floor(uptime / 3600);
+    const m = Math.floor((uptime % 3600) / 60);
+    const s = uptime % 60;
+    uptimeStr = `${h}h ${m}m ${s}s`;
+  } else if (uptime >= 60) {
+    uptimeStr = `${Math.floor(uptime/60)}m ${uptime%60}s`;
+  } else {
+    uptimeStr = `${uptime}s`;
+  }
   return {
     name,
     status: isOnline ? 'Online' : (procState.shouldRun ? 'Restarting' : 'Stopped'),
