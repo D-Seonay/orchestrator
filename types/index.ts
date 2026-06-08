@@ -1,0 +1,27 @@
+export interface AppConfig {
+  name: string;
+  script: string;
+  args?: string | string[];
+  cwd?: string;
+  env?: Record<string, string>;
+}
+
+export interface AppStats extends Omit<AppConfig, 'env'> {
+  status: 'Online' | 'Stopped' | 'Restarting';
+  restarts: number;
+  uptime: string;
+  cpu: string;
+  ram: string;
+  git: {
+    branch: string;
+    dirty: boolean;
+    sync: string;
+  };
+  shouldRun: boolean;
+  logs: string[];
+}
+
+export interface OrchestratorStatus {
+  apps: AppStats[];
+  masterUptime: string;
+}
