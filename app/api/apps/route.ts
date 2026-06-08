@@ -36,6 +36,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Script path does not exist' }, { status: 400 });
   }
 
-  orchestrator.add(body as Parameters<typeof orchestrator.add>[0]);
+  orchestrator.add(body as unknown as Parameters<typeof orchestrator.add>[0]);
   return NextResponse.json({ success: true }, { status: 201 });
 }
