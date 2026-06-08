@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { motion } from 'framer-motion';
+import { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import type { AppStats } from '@/types';
 import EnvFileModal from '@/components/EnvFileModal';
 
@@ -15,6 +15,9 @@ interface Props {
 export default function ProjectCard({ project, onAction, onUpdate, onDelete }: Props) {
   const [isEditing, setIsEditing] = useState(false);
   const [isEnvOpen, setIsEnvOpen] = useState(false);
+  const [isLogsOpen, setIsLogsOpen] = useState(false);
+  const logsEndRef = useRef<HTMLDivElement>(null);
+
   const [editData, setEditData] = useState({
     script: project.script || '',
     args: (Array.isArray(project.args) ? project.args : project.args ? [project.args] : []).join(' '),
@@ -24,6 +27,11 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
     Object.entries(project.env || {}).map(([k, v]) => ({ key: k, value: v }))
   );
 
+  // Auto-scroll logs to bottom when new lines arrive
+  useEffect(() => {
+    if (isLogsOpen) logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [project.logs, isLogsOpen]);
+
   const isOnline = project.status === 'Online';
   const statusColor = isOnline
     ? 'text-green-400'
@@ -32,6 +40,7 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
     : 'text-red-400';
 
   const envCount = Object.keys(project.env || {}).length;
+  const errorCount = project.logs.filter(l => l.includes('ERROR')).length;
 
   const handleSave = () => {
     const env = Object.fromEntries(
@@ -95,18 +104,13 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
       >
         {isEditing ? (
           <div className="flex flex-col gap-2" onClick={e => e.stopPropagation()}>
-            {/* Script / Args / CWD */}
-            {(
-              [
-                { label: 'SCRIPT', key: 'script' as const },
-                { label: 'ARGS', key: 'args' as const },
-                { label: 'CWD', key: 'cwd' as const },
-              ] as const
-            ).map(({ label, key }) => (
+            {([
+              { label: 'SCRIPT', key: 'script' as const },
+              { label: 'ARGS', key: 'args' as const },
+              { label: 'CWD', key: 'cwd' as const },
+            ] as const).map(({ label, key }) => (
               <div key={key}>
-                <label className="text-zinc-500 text-xs uppercase tracking-widest block mb-1">
-                  {label}
-                </label>
+                <label className="text-zinc-500 text-xs uppercase tracking-widest block mb-1">{label}</label>
                 <input
                   className="w-full bg-black border border-zinc-700 px-2 py-1 text-xs text-white focus:outline-none focus:border-zinc-400"
                   value={editData[key]}
@@ -165,18 +169,8 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
             </div>
 
             <div className="flex gap-2 mt-1">
-              <button
-                onClick={handleSave}
-                className="text-xs border border-zinc-600 px-3 py-1 hover:border-white hover:text-white transition-colors uppercase"
-              >
-                SAVE
-              </button>
-              <button
-                onClick={handleCancel}
-                className="text-xs text-zinc-500 hover:text-white transition-colors uppercase"
-              >
-                CANCEL
-              </button>
+              <button onClick={handleSave} className="text-xs border border-zinc-600 px-3 py-1 hover:border-white hover:text-white transition-colors uppercase">SAVE</button>
+              <button onClick={handleCancel} className="text-xs text-zinc-500 hover:text-white transition-colors uppercase">CANCEL</button>
             </div>
           </div>
         ) : (
@@ -223,10 +217,69 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
         </div>
       </div>
 
+      {/* Inline log viewer */}
+      <AnimatePresence>
+        {isLogsOpen && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
+            <div className="border border-zinc-800 bg-black">
+              <div className="flex items-center justify-between px-3 py-1 border-b border-zinc-800">
+                <span className="text-zinc-500 text-xs uppercase tracking-widest">LOGS</span>
+                <div className="flex items-center gap-2">
+                  {errorCount > 0 && (
+                    <span className="text-red-400 text-xs">{errorCount} error{errorCount > 1 ? 's' : ''}</span>
+                  )}
+                  <span className="text-zinc-700 text-xs">{project.logs.length} lines</span>
+                </div>
+              </div>
+              <div className="h-48 overflow-y-auto p-2 flex flex-col gap-0.5">
+                {project.logs.length === 0 ? (
+                  <span className="text-zinc-700 text-xs italic">no logs yet</span>
+                ) : (
+                  project.logs.map((line, i) => {
+                    const isError = line.includes('ERROR');
+                    const isWarn = line.toLowerCase().includes('warn');
+                    return (
+                      <div
+                        key={i}
+                        className={`text-xs leading-relaxed whitespace-pre-wrap break-all ${
+                          isError ? 'text-red-400' : isWarn ? 'text-yellow-400' : 'text-zinc-400'
+                        }`}
+                      >
+                        {line}
+                      </div>
+                    );
+                  })
+                )}
+                <div ref={logsEndRef} />
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Footer */}
       <div className="flex items-center justify-between">
         <span className="text-zinc-600 text-xs">UPTIME // {project.uptime}</span>
         <div className="flex gap-1">
+          <button
+            onClick={() => setIsLogsOpen(v => !v)}
+            className={`text-xs border px-2 py-1 transition-colors ${
+              isLogsOpen
+                ? 'border-zinc-500 text-zinc-300'
+                : errorCount > 0
+                ? 'border-zinc-800 text-red-500 hover:border-red-400'
+                : 'border-zinc-800 text-zinc-600 hover:border-zinc-400 hover:text-zinc-300'
+            }`}
+            title="Toggle logs"
+          >
+            LOGS{errorCount > 0 && !isLogsOpen ? ` ⚠${errorCount}` : ''}
+          </button>
           <button
             onClick={() => setIsEnvOpen(true)}
             className="text-xs border border-zinc-800 px-2 py-1 hover:border-zinc-400 hover:text-zinc-300 transition-colors text-zinc-600"
@@ -234,34 +287,10 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
           >
             .env
           </button>
-          <button
-            onClick={() => onAction('start')}
-            className="text-xs border border-zinc-800 px-2 py-1 hover:border-green-400 hover:text-green-400 transition-colors"
-            title="Start"
-          >
-            ▶
-          </button>
-          <button
-            onClick={() => onAction('stop')}
-            className="text-xs border border-zinc-800 px-2 py-1 hover:border-red-400 hover:text-red-400 transition-colors"
-            title="Stop"
-          >
-            ■
-          </button>
-          <button
-            onClick={() => onAction('restart')}
-            className="text-xs border border-zinc-800 px-2 py-1 hover:border-yellow-400 hover:text-yellow-400 transition-colors"
-            title="Restart"
-          >
-            ↺
-          </button>
-          <button
-            onClick={onDelete}
-            className="text-xs border border-zinc-800 px-2 py-1 hover:border-red-600 hover:text-red-600 transition-colors"
-            title="Delete"
-          >
-            ✕
-          </button>
+          <button onClick={() => onAction('start')} className="text-xs border border-zinc-800 px-2 py-1 hover:border-green-400 hover:text-green-400 transition-colors" title="Start">▶</button>
+          <button onClick={() => onAction('stop')} className="text-xs border border-zinc-800 px-2 py-1 hover:border-red-400 hover:text-red-400 transition-colors" title="Stop">■</button>
+          <button onClick={() => onAction('restart')} className="text-xs border border-zinc-800 px-2 py-1 hover:border-yellow-400 hover:text-yellow-400 transition-colors" title="Restart">↺</button>
+          <button onClick={onDelete} className="text-xs border border-zinc-800 px-2 py-1 hover:border-red-600 hover:text-red-600 transition-colors" title="Delete">✕</button>
         </div>
       </div>
 
