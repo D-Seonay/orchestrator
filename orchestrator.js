@@ -9,7 +9,9 @@ const configPath = path.join(__dirname, 'apps.config.json');
 let appsConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
 function saveConfig() {
-  fs.writeFileSync(configPath, JSON.stringify(appsConfig, null, 2), 'utf8');
+  const tempPath = `${configPath}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(appsConfig, null, 2), 'utf8');
+  fs.renameSync(tempPath, configPath);
 }
 
 const processes = new Map();
@@ -194,6 +196,12 @@ const server = http.createServer((req, res) => {
           if (appsConfig.find(a => a.name === newApp.name)) {
             res.writeHead(400); return res.end('App already exists');
           }
+          if (newApp.script && !fs.existsSync(newApp.script)) {
+            res.writeHead(400); return res.end('Script path does not exist');
+          }
+          if (newApp.cwd && !fs.existsSync(newApp.cwd)) {
+            res.writeHead(400); return res.end('CWD path does not exist');
+          }
           appsConfig.push(newApp);
           saveConfig();
           startApp(newApp);
@@ -218,13 +226,40 @@ const server = http.createServer((req, res) => {
         req.on('end', () => {
           try {
             const updates = JSON.parse(body);
+            
+            if (updates.name && updates.name !== appName && appsConfig.find(a => a.name === updates.name)) {
+              res.writeHead(400); return res.end('App name already exists');
+            }
+            if (updates.script && !fs.existsSync(updates.script)) {
+              res.writeHead(400); return res.end('Script path does not exist');
+            }
+            if (updates.cwd && !fs.existsSync(updates.cwd)) {
+              res.writeHead(400); return res.end('CWD path does not exist');
+            }
+
+            const isRename = updates.name && updates.name !== appName;
+            
             appsConfig[appIndex] = { ...appsConfig[appIndex], ...updates };
             saveConfig();
-            const state = processes.get(appName);
-            if (state) {
-              state.config = appsConfig[appIndex];
-              restartApp(appName);
+
+            if (isRename) {
+              const oldState = processes.get(appName);
+              if (oldState) {
+                const wasRunning = oldState.shouldRun;
+                stopApp(appName);
+                processes.delete(appName);
+                if (wasRunning) {
+                  startApp(appsConfig[appIndex]);
+                }
+              }
+            } else {
+              const state = processes.get(appName);
+              if (state) {
+                state.config = appsConfig[appIndex];
+                restartApp(appName);
+              }
             }
+
             res.writeHead(200); res.end('Updated');
           } catch (e) {
             res.writeHead(400); res.end('Invalid JSON');
