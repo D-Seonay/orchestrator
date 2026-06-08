@@ -1,122 +1,121 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import React from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import './App.css';
 
-function App() {
-  const [count, setCount] = useState(0)
+const mockProjects = [
+  {
+    name: 'ORCHESTRATOR',
+    status: 'online',
+    cpu: '1.2%',
+    ram: '45MB',
+    uptime: '12h 30m 15s',
+    branch: 'main'
+  },
+  {
+    name: 'FRONT-SEMAPHORE',
+    status: 'online',
+    cpu: '0.5%',
+    ram: '128MB',
+    uptime: '45m 10s',
+    branch: 'develop'
+  },
+  {
+    name: 'AUTH-SERVICE',
+    status: 'offline',
+    cpu: '0%',
+    ram: '0MB',
+    uptime: '0s',
+    branch: 'main'
+  },
+  {
+    name: 'LOGGER-DB',
+    status: 'online',
+    cpu: '2.4%',
+    ram: '256MB',
+    uptime: '3d 4h 12m',
+    branch: 'main'
+  }
+];
+
+const ProjectCard = ({ project }) => {
+  const isOnline = project.status === 'online';
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
+    <motion.div 
+      className="project-card"
+      initial={{ opacity: 0, y: 30 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.95 }}
+      transition={{ 
+        duration: 0.8, 
+        ease: [0.16, 1, 0.3, 1] 
+      }}
+    >
+      <div className="project-header">
+        <h2 className="project-name">{project.name}</h2>
+        <motion.span 
+          className={`project-status ${isOnline ? 'status-online' : 'status-offline'}`}
+          initial={false}
+          animate={{ 
+            opacity: [0.5, 1, 0.5],
+            transition: isOnline ? { repeat: Infinity, duration: 3 } : {}
+          }}
         >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
+          {project.status}
+        </motion.span>
+      </div>
+      
+      <div className="project-stats">
+        <div className="stat-item">
+          <span className="stat-label">System CPU</span>
+          <span className="stat-value">{project.cpu}</span>
         </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
+        <div className="stat-item">
+          <span className="stat-label">Allocated RAM</span>
+          <span className="stat-value">{project.ram}</span>
         </div>
-      </section>
+      </div>
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+      <div className="project-footer">
+        <div className="uptime-pill">
+          UPTIME // {project.uptime}
+        </div>
+        <div className="branch-info">
+          {project.branch}
+        </div>
+      </div>
+    </motion.div>
+  );
+};
+
+function App() {
+  return (
+    <div className="dashboard">
+      <header>
+        <motion.h1
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 1, ease: [0.16, 1, 0.3, 1] }}
+        >
+          ORCHESTRATOR<br />
+          PRO_DASHBOARD
+        </motion.h1>
+      </header>
+
+      <main>
+        <div className="projects-grid">
+          <AnimatePresence mode="popLayout">
+            {mockProjects.map((project, index) => (
+              <ProjectCard 
+                key={project.name} 
+                project={project} 
+              />
+            ))}
+          </AnimatePresence>
+        </div>
+      </main>
+    </div>
+  );
 }
 
-export default App
+export default App;

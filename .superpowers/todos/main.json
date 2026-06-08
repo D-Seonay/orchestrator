@@ -12,12 +12,12 @@
   {
     "id": 3,
     "task": "Backend API for Project Management",
-    "status": "pending"
+    "status": "complete"
   },
   {
     "id": 4,
     "task": "Initialize Vite Frontend",
-    "status": "pending"
+    "status": "complete"
   },
   {
     "id": 5,
