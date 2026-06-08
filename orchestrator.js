@@ -320,8 +320,14 @@ const server = http.createServer((req, res) => {
   }
 
   // --- Static Files & SPA Routing ---
-  let filePath = path.join(DIST_PATH, pathname === '/' ? 'index.html' : pathname);
-  
+  const normalizedPath = path.normalize(pathname);
+  let filePath = path.join(DIST_PATH, normalizedPath === '\\' || normalizedPath === '/' ? 'index.html' : normalizedPath);
+
+  // Security check: ensure the resulting path is within DIST_PATH
+  if (!filePath.startsWith(DIST_PATH)) {
+    filePath = path.join(DIST_PATH, 'index.html');
+  }
+
   // Handle Single Page Application (SPA) routing: if file doesn't exist, serve index.html
   if (!fs.existsSync(filePath)) {
     filePath = path.join(DIST_PATH, 'index.html');
