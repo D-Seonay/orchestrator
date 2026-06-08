@@ -4,7 +4,9 @@ import ProjectCard from './components/ProjectCard';
 import AddProjectModal from './components/AddProjectModal';
 import './App.css';
 
-const API_URL = 'http://localhost:4444/api/apps';
+const API_PORT = 4444;
+const API_BASE_URL = `http://${window.location.hostname}:${API_PORT}/api`;
+const API_URL = `${API_BASE_URL}/apps`;
 
 function App() {
   const [projects, setProjects] = useState([]);
@@ -14,8 +16,8 @@ function App() {
   const fetchProjects = async () => {
     try {
       const [statusRes, appsRes] = await Promise.all([
-        fetch('http://localhost:4444/api/status'),
-        fetch('http://localhost:4444/api/apps')
+        fetch(`${API_BASE_URL}/status`),
+        fetch(`${API_BASE_URL}/apps`)
       ]);
       
       const statusData = await statusRes.json();
@@ -52,12 +54,17 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(projectData),
       });
-      if (response.ok) {
-        fetchProjects();
-        setIsModalOpen(false);
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || errorData.message || 'Deployment failed');
       }
+
+      await fetchProjects();
+      setIsModalOpen(false);
     } catch (error) {
       console.error('Failed to add project:', error);
+      throw error;
     }
   };
 

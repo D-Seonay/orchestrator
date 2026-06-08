@@ -78,7 +78,19 @@ const ProjectCard = ({ project, onUpdate, onDelete }) => {
             </div>
           </div>
         ) : (
-          <div className="display-fields" onClick={() => setIsEditing(true)}>
+          <div 
+            className="display-fields" 
+            onClick={() => setIsEditing(true)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setIsEditing(true);
+              }
+            }}
+            tabIndex={0}
+            role="button"
+            aria-label={`Edit ${project.name}`}
+          >
             <div className="detail-item">
               <span className="detail-label">LAUNCH_SCRIPT</span>
               <span className="detail-value">{project.script || 'N/A'}</span>

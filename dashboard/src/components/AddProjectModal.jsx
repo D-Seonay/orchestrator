@@ -8,14 +8,26 @@ const AddProjectModal = ({ isOpen, onClose, onAdd }) => {
     args: '',
     cwd: ''
   });
+  const [error, setError] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    onAdd({
-      ...formData,
-      args: formData.args.split(' ').filter(arg => arg !== '')
-    });
-    setFormData({ name: '', script: '', args: '', cwd: '' });
+    setError(null);
+    setIsSubmitting(true);
+    
+    try {
+      await onAdd({
+        ...formData,
+        args: formData.args.split(' ').filter(arg => arg !== '')
+      });
+      setFormData({ name: '', script: '', args: '', cwd: '' });
+      onClose();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -40,12 +52,20 @@ const AddProjectModal = ({ isOpen, onClose, onAdd }) => {
               <h2>NEW_DEPLOYMENT</h2>
               <button className="close-button" onClick={onClose}>&times;</button>
             </div>
+
+            {error && (
+              <div className="error-banner">
+                <span className="error-label">ERROR //</span> {error}
+              </div>
+            )}
+
             <form onSubmit={handleSubmit}>
               <div className="form-group">
                 <label>PROJECT_NAME</label>
                 <input 
                   type="text" 
                   required 
+                  disabled={isSubmitting}
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   placeholder="e.g. AUTH-SERVICE"
@@ -56,6 +76,7 @@ const AddProjectModal = ({ isOpen, onClose, onAdd }) => {
                 <input 
                   type="text" 
                   required 
+                  disabled={isSubmitting}
                   value={formData.script}
                   onChange={(e) => setFormData({ ...formData, script: e.target.value })}
                   placeholder="e.g. node index.js"
@@ -65,6 +86,7 @@ const AddProjectModal = ({ isOpen, onClose, onAdd }) => {
                 <label>ARGUMENTS</label>
                 <input 
                   type="text" 
+                  disabled={isSubmitting}
                   value={formData.args}
                   onChange={(e) => setFormData({ ...formData, args: e.target.value })}
                   placeholder="e.g. --port 3000"
@@ -74,12 +96,19 @@ const AddProjectModal = ({ isOpen, onClose, onAdd }) => {
                 <label>WORKING_DIR</label>
                 <input 
                   type="text" 
+                  disabled={isSubmitting}
                   value={formData.cwd}
                   onChange={(e) => setFormData({ ...formData, cwd: e.target.value })}
                   placeholder="./services/auth"
                 />
               </div>
-              <button type="submit" className="submit-button">INITIATE_DEPLOYMENT</button>
+              <button 
+                type="submit" 
+                className="submit-button"
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? 'INITIATING...' : 'INITIATE_DEPLOYMENT'}
+              </button>
             </form>
           </motion.div>
         </>
