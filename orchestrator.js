@@ -196,11 +196,12 @@ const server = http.createServer((req, res) => {
           if (appsConfig.find(a => a.name === newApp.name)) {
             res.writeHead(400); return res.end('App already exists');
           }
-          if (newApp.script && !fs.existsSync(newApp.script)) {
-            res.writeHead(400); return res.end('Script path does not exist');
-          }
           if (newApp.cwd && !fs.existsSync(newApp.cwd)) {
             res.writeHead(400); return res.end('CWD path does not exist');
+          }
+          const checkCwd = newApp.cwd || process.cwd();
+          if (newApp.script && !fs.existsSync(path.resolve(checkCwd, newApp.script))) {
+            res.writeHead(400); return res.end('Script path does not exist');
           }
           appsConfig.push(newApp);
           saveConfig();
@@ -230,11 +231,16 @@ const server = http.createServer((req, res) => {
             if (updates.name && updates.name !== appName && appsConfig.find(a => a.name === updates.name)) {
               res.writeHead(400); return res.end('App name already exists');
             }
-            if (updates.script && !fs.existsSync(updates.script)) {
-              res.writeHead(400); return res.end('Script path does not exist');
-            }
+
+            const currentApp = appsConfig[appIndex];
+            const finalCwd = (updates.cwd !== undefined ? updates.cwd : currentApp.cwd) || process.cwd();
             if (updates.cwd && !fs.existsSync(updates.cwd)) {
               res.writeHead(400); return res.end('CWD path does not exist');
+            }
+
+            const checkScript = updates.script !== undefined ? updates.script : currentApp.script;
+            if (checkScript && !fs.existsSync(path.resolve(finalCwd, checkScript))) {
+              res.writeHead(400); return res.end('Script path does not exist');
             }
 
             const isRename = updates.name && updates.name !== appName;
@@ -246,10 +252,27 @@ const server = http.createServer((req, res) => {
               const oldState = processes.get(appName);
               if (oldState) {
                 const wasRunning = oldState.shouldRun;
-                stopApp(appName);
+                
+                // Stop the old process and ensure it doesn't restart
+                oldState.shouldRun = false;
+                if (oldState.child) oldState.child.kill('SIGTERM');
+                
+                // Migrate the state to the new name so logs, restarts are preserved
+                const newState = {
+                  ...oldState,
+                  config: appsConfig[appIndex],
+                  shouldRun: wasRunning,
+                  child: null,
+                  restarts: wasRunning ? oldState.restarts - 1 : oldState.restarts // startApp will increment
+                };
+                
+                processes.set(updates.name, newState);
                 processes.delete(appName);
+
                 if (wasRunning) {
                   startApp(appsConfig[appIndex]);
+                  // Restore original startTime that startApp just overwrote
+                  processes.get(updates.name).startTime = oldState.startTime;
                 }
               }
             } else {
@@ -456,7 +479,7 @@ function startApp(config) {
   
   child.on('exit', (code, signal) => {
     const currentState = processes.get(config.name);
-    if (!currentState) return;
+    if (!currentState || currentState.child !== child) return;
     processes.set(config.name, { ...currentState, child: null, resources: { cpu: '0%', ram: '0MB' } });
     if (!isShuttingDown && currentState.shouldRun && (currentState.manualRestart || (signal !== 'SIGTERM' && signal !== 'SIGKILL'))) {
       setTimeout(() => startApp(currentState.config), currentState.manualRestart ? 500 : 1500);
