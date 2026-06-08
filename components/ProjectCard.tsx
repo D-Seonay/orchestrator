@@ -8,7 +8,7 @@ import LogModal from '@/components/LogModal';
 
 interface Props {
   project: AppStats;
-  onAction: (action: 'start' | 'stop' | 'restart') => void;
+  onAction: (action: 'start' | 'stop' | 'restart' | 'gitpull') => void;
   onUpdate: (patch: { script?: string; args?: string[]; cwd?: string; env?: Record<string, string> }) => void;
   onDelete: () => void;
 }
@@ -228,6 +228,15 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
           >
             LOGS{errorCount > 0 ? ` ⚠${errorCount}` : ''}
           </button>
+          {project.cwd && (
+            <button
+              onClick={() => onAction('gitpull')}
+              className="text-xs border border-zinc-800 px-2 py-1 hover:border-blue-400 hover:text-blue-400 transition-colors text-zinc-600"
+              title="Git pull + restart"
+            >
+              ⬇ pull
+            </button>
+          )}
           <button
             onClick={() => setIsEnvOpen(true)}
             className="text-xs border border-zinc-800 px-2 py-1 hover:border-zinc-400 hover:text-zinc-300 transition-colors text-zinc-600"

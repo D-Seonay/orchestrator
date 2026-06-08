@@ -4,6 +4,7 @@ export interface AppConfig {
   args?: string | string[];
   cwd?: string;
   env?: Record<string, string>;
+  group?: string;
 }
 
 export interface AppStats extends AppConfig {

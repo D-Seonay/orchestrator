@@ -275,6 +275,7 @@ export const orchestrator = {
         args: app.args,
         cwd: app.cwd,
         env: app.env,
+        group: app.group,
         status: (isOnline
           ? (state.buildState === 'building' ? 'Building' : 'Online')
           : state.shouldRun ? 'Restarting' : 'Stopped') as AppStats['status'],
@@ -295,5 +296,35 @@ export const orchestrator = {
 
   getAppsConfig(): AppConfig[] {
     return S.appsConfig;
+  },
+
+  startGroup(group: string): void {
+    S.appsConfig.filter(a => a.group === group).forEach(a => this.start(a.name));
+  },
+
+  stopGroup(group: string): void {
+    S.appsConfig.filter(a => a.group === group).forEach(a => this.stop(a.name));
+  },
+
+  restartGroup(group: string): void {
+    S.appsConfig.filter(a => a.group === group).forEach(a => this.restart(a.name));
+  },
+
+  gitPull(name: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const state = S.processes.get(name);
+      const cwd = state?.config.cwd || process.cwd();
+      exec('git pull', { cwd }, (err, stdout, stderr) => {
+        const output = stripAnsi((stdout || stderr || '').trim());
+        const currentState = S.processes.get(name);
+        if (currentState) {
+          const timestamp = new Date().toLocaleTimeString();
+          currentState.logs.push(`[${timestamp}] GIT: ${output}`);
+          if (currentState.logs.length > MAX_LOG_LINES) currentState.logs.shift();
+        }
+        if (err) reject(new Error(output || err.message));
+        else resolve(output);
+      });
+    });
   },
 };

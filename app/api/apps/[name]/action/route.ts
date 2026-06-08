@@ -28,6 +28,14 @@ export async function POST(req: NextRequest, { params }: Params) {
     case 'restart':
       orchestrator.restart(appName);
       break;
+    case 'gitpull':
+      try {
+        await orchestrator.gitPull(appName);
+        orchestrator.restart(appName);
+      } catch (err) {
+        return NextResponse.json({ error: String(err) }, { status: 500 });
+      }
+      break;
     default:
       return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
   }
