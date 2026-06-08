@@ -15,6 +15,7 @@ export default function EnvFileModal({ appName, isOpen, onClose }: Props) {
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [status, setStatus] = useState<'idle' | 'saved' | 'error'>('idle');
+  const [errorMsg, setErrorMsg] = useState('');
 
   useEffect(() => {
     if (!isOpen) return;
@@ -38,8 +39,15 @@ export default function EnvFileModal({ appName, isOpen, onClose }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content }),
       });
-      setStatus(res.ok ? 'saved' : 'error');
-    } catch {
+      if (res.ok) {
+        setStatus('saved');
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setErrorMsg(data.error || `HTTP ${res.status}`);
+        setStatus('error');
+      }
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Network error');
       setStatus('error');
     } finally {
       setIsSaving(false);
@@ -99,7 +107,7 @@ export default function EnvFileModal({ appName, isOpen, onClose }: Props) {
             <div className="flex items-center justify-between">
               <span className="text-xs">
                 {status === 'saved' && <span className="text-green-400">SAVED — app restarted</span>}
-                {status === 'error' && <span className="text-red-400">ERROR // save failed</span>}
+                {status === 'error' && <span className="text-red-400">ERROR // {errorMsg || 'save failed'}</span>}
                 {status === 'idle' && <span className="text-zinc-600">Changes trigger auto-restart</span>}
               </span>
               <div className="flex gap-2">
