@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import type { AppStats } from '@/types';
+import EnvFileModal from '@/components/EnvFileModal';
 
 interface Props {
   project: AppStats;
@@ -13,6 +14,7 @@ interface Props {
 
 export default function ProjectCard({ project, onAction, onUpdate, onDelete }: Props) {
   const [isEditing, setIsEditing] = useState(false);
+  const [isEnvOpen, setIsEnvOpen] = useState(false);
   const [editData, setEditData] = useState({
     script: project.script || '',
     args: (Array.isArray(project.args) ? project.args : project.args ? [project.args] : []).join(' '),
@@ -226,6 +228,13 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
         <span className="text-zinc-600 text-xs">UPTIME // {project.uptime}</span>
         <div className="flex gap-1">
           <button
+            onClick={() => setIsEnvOpen(true)}
+            className="text-xs border border-zinc-800 px-2 py-1 hover:border-zinc-400 hover:text-zinc-300 transition-colors text-zinc-600"
+            title="Edit .env file"
+          >
+            .env
+          </button>
+          <button
             onClick={() => onAction('start')}
             className="text-xs border border-zinc-800 px-2 py-1 hover:border-green-400 hover:text-green-400 transition-colors"
             title="Start"
@@ -255,6 +264,12 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
           </button>
         </div>
       </div>
+
+      <EnvFileModal
+        appName={project.name}
+        isOpen={isEnvOpen}
+        onClose={() => setIsEnvOpen(false)}
+      />
     </motion.div>
   );
 }
