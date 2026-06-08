@@ -28,20 +28,20 @@ node orchestrator.js
 Une fois lancé, ouvrez votre navigateur sur :
 [http://localhost:4444](http://localhost:4444)
 
-## ⚙️ Configuration (`apps.config.js`)
+## ⚙️ Configuration (`apps.config.json`)
 
-Le fichier `apps.config.js` définit la liste des applications à orchestrer :
+Le fichier `apps.config.json` définit la liste des applications à orchestrer :
 
-```javascript
-module.exports = [
+```json
+[
   {
-    name: "mon-projet",
-    script: "app.js",
-    cwd: "C:/Chemin/Vers/Le/Projet",
-    args: "--port 3000", // Optionnel
-    env: { NODE_ENV: "production" } // Variables additionnelles
+    "name": "mon-projet",
+    "script": "app.js",
+    "cwd": "C:/Chemin/Vers/Le/Projet",
+    "args": "--port 3000",
+    "env": { "NODE_ENV": "production" }
   }
-];
+]
 ```
 
 ## 🔒 Sécurité & Environnement

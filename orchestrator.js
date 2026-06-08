@@ -4,7 +4,9 @@ const path = require('path');
 const readline = require('readline');
 const http = require('http');
 const url = require('url');
-const appsConfig = require('./apps.config.json');
+
+const configPath = path.join(__dirname, 'apps.config.json');
+const appsConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
 const processes = new Map();
 let isShuttingDown = false;
