@@ -1,0 +1,147 @@
+<h2>Design Concept: Dark Mode Absolute</h2>
+<p class="subtitle">Deep Zinc (#09090b) background with Silver-white (#fafafa) typography.</p>
+
+<style>
+  :root {
+    --bg-zinc: #09090b;
+    --text-silver: #fafafa;
+    --accent-mono: #71717a;
+    --border-subtle: #27272a;
+  }
+
+  .mockup-body {
+    background-color: var(--bg-zinc) !important;
+    color: var(--text-silver) !important;
+    font-family: 'Inter', sans-serif;
+    padding: 40px;
+    min-height: 500px;
+  }
+
+  .brutalist-header {
+    font-weight: 900;
+    font-size: 3.5rem;
+    letter-spacing: -0.05em;
+    text-transform: uppercase;
+    margin-bottom: 40px;
+    line-height: 0.9;
+  }
+
+  .mono-accent {
+    font-family: 'Fira Code', 'Courier New', monospace;
+    font-size: 0.75rem;
+    color: var(--accent-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  .project-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 60px; /* Extreme whitespace */
+    margin-top: 60px;
+  }
+
+  .project-card {
+    border-top: 1px solid var(--border-subtle);
+    padding-top: 20px;
+    transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .project-card:hover {
+    border-top-color: var(--text-silver);
+  }
+
+  .project-name {
+    font-size: 1.25rem;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+
+  .uptime-pill {
+    font-family: 'Fira Code', monospace;
+    font-size: 0.8rem;
+    background: #18181b;
+    padding: 2px 8px;
+    border-radius: 2px;
+  }
+
+  .add-project-btn {
+    border: 1px solid var(--text-silver);
+    background: transparent;
+    color: var(--text-silver);
+    padding: 12px 24px;
+    font-family: 'Fira Code', monospace;
+    font-size: 0.8rem;
+    cursor: pointer;
+    margin-top: 40px;
+    transition: all 0.3s ease;
+  }
+
+  .add-project-btn:hover {
+    background: var(--text-silver);
+    color: var(--bg-zinc);
+  }
+
+  .status-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #10b981;
+    margin-right: 8px;
+  }
+</style>
+
+<div class="mockup">
+  <div class="mockup-body">
+    <div class="mono-accent">// SYSTEM_ORCHESTRATOR_V2</div>
+    <div class="brutalist-header">Dashboard</div>
+    
+    <div class="project-grid">
+      <div class="project-card">
+        <div class="mono-accent">01_ONLINE</div>
+        <div class="project-name">front-semaphore</div>
+        <div class="mono-accent">
+          UPTIME: <span class="uptime-pill">02h 15m</span> 
+          <span style="margin-left: 10px">CPU: 1.2%</span>
+        </div>
+      </div>
+
+      <div class="project-card">
+        <div class="mono-accent">02_ONLINE</div>
+        <div class="project-name">base-semaphore</div>
+        <div class="mono-accent">
+          UPTIME: <span class="uptime-pill">45m 12s</span>
+          <span style="margin-left: 10px">CPU: 0.8%</span>
+        </div>
+      </div>
+
+      <div class="project-card" style="opacity: 0.4">
+        <div class="mono-accent">03_STOPPED</div>
+        <div class="project-name">stock-semaphore</div>
+        <div class="mono-accent">
+          UPTIME: <span class="uptime-pill">--</span>
+        </div>
+      </div>
+    </div>
+
+    <button class="add-project-btn">+ DEPLOY_NEW_SERVICE</button>
+  </div>
+</div>
+
+<div class="options" style="margin-top: 40px">
+  <div class="option" data-choice="approve" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>I love this aesthetic</h3>
+      <p>Proceed with this "Digital Gallery" Brutalist look.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="adjust" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Adjust the design</h3>
+      <p>I want something slightly different (let me know in chat).</p>
+    </div>
+  </div>
+</div>

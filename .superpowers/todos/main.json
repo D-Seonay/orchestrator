@@ -1,0 +1,37 @@
+[
+  {
+    "id": 1,
+    "task": "Transition to JSON Configuration",
+    "status": "complete"
+  },
+  {
+    "id": 2,
+    "task": "Implement Uptime Hour Formatting",
+    "status": "complete"
+  },
+  {
+    "id": 3,
+    "task": "Backend API for Project Management",
+    "status": "pending"
+  },
+  {
+    "id": 4,
+    "task": "Initialize Vite Frontend",
+    "status": "pending"
+  },
+  {
+    "id": 5,
+    "task": "Brutalist UI Components",
+    "status": "pending"
+  },
+  {
+    "id": 6,
+    "task": "Project Management UI",
+    "status": "pending"
+  },
+  {
+    "id": 7,
+    "task": "Final Integration",
+    "status": "pending"
+  }
+]

@@ -6,7 +6,11 @@ const http = require('http');
 const url = require('url');
 
 const configPath = path.join(__dirname, 'apps.config.json');
-const appsConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+let appsConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+
+function saveConfig() {
+  fs.writeFileSync(configPath, JSON.stringify(appsConfig, null, 2), 'utf8');
+}
 
 const processes = new Map();
 let isShuttingDown = false;
@@ -128,19 +132,24 @@ function renderDashboard() {
   process.stdout.write('\x1b[s\x1b[H'); 
   process.stdout.write('\x1b[1m\x1b[36m🚀 ORCHESTRATOR LIVE \x1b[0m | \x1b[2mhttp://localhost:' + WEB_PORT + '\x1b[0m\x1b[K\n');
   process.stdout.write(`Uptime: ${formatUptime(Math.floor((Date.now() - startTime) / 1000))}\x1b[K\n\n`);
-  const head = 'PROJECT'.padEnd(20) + 'STATUS'.padEnd(12) + 'CPU/RAM'.padEnd(18) + 'GIT'.padEnd(15) + 'RESTARTS';
+  const head = 'PROJECT'.padEnd(20) + 'STATUS'.padEnd(10) + 'UPTIME'.padEnd(12) + 'CPU/RAM'.padEnd(16) + 'GIT'.padEnd(12) + 'RESTARTS';
   process.stdout.write('\x1b[1m\x1b[37m' + head + '\x1b[0m\x1b[K\n');
-  process.stdout.write('\x1b[90m' + '─'.repeat(75) + '\x1b[0m\x1b[K\n');
+  process.stdout.write('\x1b[90m' + '─'.repeat(80) + '\x1b[0m\x1b[K\n');
   for (const app of appsConfig) {
     const s = getAppStats(app.name);
     if (!s) continue;
     const color = s.status === 'Online' ? '32' : (s.shouldRun ? '33' : '31');
-    const status = `\x1b[${color}m${s.status.padEnd(12)}\x1b[0m`;
-    const res = `\x1b[34m${s.cpu}\x1b[0m / \x1b[35m${s.ram}\x1b[0m`.padEnd(30);
-    const git = `\x1b[33m${s.git.branch}${s.git.dirty ? '*' : ''}\x1b[0m`.padEnd(25);
-    process.stdout.write(s.name.padEnd(20) + status + res + git + s.restarts + '\x1b[K\n');
+    const status = `\x1b[${color}m${s.status.padEnd(10)}\x1b[0m`;
+    const uptime = s.uptime.padEnd(12);
+    const res = `\x1b[34m${s.cpu.split('%')[0]}%\x1b[0m/\x1b[35m${s.ram}\x1b[0m`.padEnd(25); 
+    const git = `\x1b[33m${s.git.branch}${s.git.dirty ? '*' : ''}\x1b[0m`.padEnd(22); 
+    
+    const nameStr = s.name.padEnd(20);
+    const restartsStr = String(s.restarts).padStart(8);
+    
+    process.stdout.write(nameStr + status + uptime + res + git + restartsStr + '\x1b[K\n');
   }
-  process.stdout.write('\x1b[90m' + '─'.repeat(75) + '\x1b[0m\x1b[K\n');
+  process.stdout.write('\x1b[90m' + '─'.repeat(80) + '\x1b[0m\x1b[K\n');
   process.stdout.write('\x1b[2mCommands: start/stop/restart [name] | git | list\x1b[0m\x1b[K\n\x1b[u'); 
 }
 
@@ -165,6 +174,75 @@ const server = http.createServer((req, res) => {
     else if (action === 'stop') stopApp(app);
     else if (action === 'start') { const c = appsConfig.find(a => a.name === app); if (c) startApp(c); }
     res.writeHead(200); return res.end('OK');
+  }
+
+  // Project Management API
+  if (pathname === '/api/apps') {
+    if (req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify(appsConfig));
+    }
+    if (req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const newApp = JSON.parse(body);
+          if (!newApp.name || !newApp.script) {
+            res.writeHead(400); return res.end('Missing name or script');
+          }
+          if (appsConfig.find(a => a.name === newApp.name)) {
+            res.writeHead(400); return res.end('App already exists');
+          }
+          appsConfig.push(newApp);
+          saveConfig();
+          startApp(newApp);
+          res.writeHead(201); res.end('Created');
+        } catch (e) {
+          res.writeHead(400); res.end('Invalid JSON');
+        }
+      });
+      return;
+    }
+  }
+
+  const appMatch = pathname.match(/^\/api\/apps\/(.+)$/);
+  if (appMatch) {
+    const appName = decodeURIComponent(appMatch[1]);
+    const appIndex = appsConfig.findIndex(a => a.name === appName);
+
+    if (appIndex !== -1) {
+      if (req.method === 'PATCH') {
+        let body = '';
+        req.on('data', chunk => { body += chunk; });
+        req.on('end', () => {
+          try {
+            const updates = JSON.parse(body);
+            appsConfig[appIndex] = { ...appsConfig[appIndex], ...updates };
+            saveConfig();
+            const state = processes.get(appName);
+            if (state) {
+              state.config = appsConfig[appIndex];
+              restartApp(appName);
+            }
+            res.writeHead(200); res.end('Updated');
+          } catch (e) {
+            res.writeHead(400); res.end('Invalid JSON');
+          }
+        });
+        return;
+      }
+      if (req.method === 'DELETE') {
+        stopApp(appName);
+        appsConfig.splice(appIndex, 1);
+        processes.delete(appName);
+        saveConfig();
+        res.writeHead(200); res.end('Deleted');
+        return;
+      }
+    } else {
+      res.writeHead(404); return res.end('Not Found');
+    }
   }
 
   // HTML UI
@@ -343,9 +421,10 @@ function startApp(config) {
   
   child.on('exit', (code, signal) => {
     const currentState = processes.get(config.name);
+    if (!currentState) return;
     processes.set(config.name, { ...currentState, child: null, resources: { cpu: '0%', ram: '0MB' } });
     if (!isShuttingDown && currentState.shouldRun && (currentState.manualRestart || (signal !== 'SIGTERM' && signal !== 'SIGKILL'))) {
-      setTimeout(() => startApp(config), currentState.manualRestart ? 500 : 1500);
+      setTimeout(() => startApp(currentState.config), currentState.manualRestart ? 500 : 1500);
     }
   });
 }
