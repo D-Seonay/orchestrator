@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatUptime, parseEnvFile } from '@/lib/utils';
+import { formatUptime, parseEnvFile, stripAnsi } from '@/lib/utils';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -48,5 +48,21 @@ describe('parseEnvFile', () => {
     fs.writeFileSync(tmp, 'A="hello world"\nB=\'single\'\n');
     expect(parseEnvFile(tmp)).toEqual({ A: 'hello world', B: 'single' });
     fs.unlinkSync(tmp);
+  });
+});
+
+describe('stripAnsi', () => {
+  it('supprime les codes couleur ANSI', () => {
+    expect(stripAnsi('\x1b[32mBuilding...\x1b[0m')).toBe('Building...');
+    expect(stripAnsi('\x1b[1m\x1b[33mWarning\x1b[39m\x1b[22m')).toBe('Warning');
+  });
+
+  it('supprime les codes gras/souligné', () => {
+    expect(stripAnsi('\x1b[1mInitial chunk files\x1b[22m')).toBe('Initial chunk files');
+  });
+
+  it('laisse le texte sans codes inchangé', () => {
+    expect(stripAnsi('plain text')).toBe('plain text');
+    expect(stripAnsi('')).toBe('');
   });
 });

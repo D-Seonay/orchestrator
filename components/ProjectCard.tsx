@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useState } from 'react';
+import { motion } from 'framer-motion';
 import type { AppStats } from '@/types';
 import EnvFileModal from '@/components/EnvFileModal';
+import LogModal from '@/components/LogModal';
 
 interface Props {
   project: AppStats;
@@ -16,7 +17,6 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
   const [isEditing, setIsEditing] = useState(false);
   const [isEnvOpen, setIsEnvOpen] = useState(false);
   const [isLogsOpen, setIsLogsOpen] = useState(false);
-  const logsEndRef = useRef<HTMLDivElement>(null);
 
   const [editData, setEditData] = useState({
     script: project.script || '',
@@ -26,11 +26,6 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
   const [envEntries, setEnvEntries] = useState<{ key: string; value: string }[]>(
     Object.entries(project.env || {}).map(([k, v]) => ({ key: k, value: v }))
   );
-
-  // Auto-scroll logs to bottom when new lines arrive
-  useEffect(() => {
-    if (isLogsOpen) logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [project.logs, isLogsOpen]);
 
   const isOnline = project.status === 'Online';
   const isBuilding = project.status === 'Building';
@@ -218,68 +213,20 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
         </div>
       </div>
 
-      {/* Inline log viewer */}
-      <AnimatePresence>
-        {isLogsOpen && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden"
-          >
-            <div className="border border-zinc-800 bg-black">
-              <div className="flex items-center justify-between px-3 py-1 border-b border-zinc-800">
-                <span className="text-zinc-500 text-xs uppercase tracking-widest">LOGS</span>
-                <div className="flex items-center gap-2">
-                  {errorCount > 0 && (
-                    <span className="text-red-400 text-xs">{errorCount} error{errorCount > 1 ? 's' : ''}</span>
-                  )}
-                  <span className="text-zinc-700 text-xs">{project.logs.length} lines</span>
-                </div>
-              </div>
-              <div className="h-48 overflow-y-auto p-2 flex flex-col gap-0.5">
-                {project.logs.length === 0 ? (
-                  <span className="text-zinc-700 text-xs italic">no logs yet</span>
-                ) : (
-                  project.logs.map((line, i) => {
-                    const isError = line.includes('ERROR');
-                    const isWarn = line.toLowerCase().includes('warn');
-                    return (
-                      <div
-                        key={i}
-                        className={`text-xs leading-relaxed whitespace-pre-wrap break-all ${
-                          isError ? 'text-red-400' : isWarn ? 'text-yellow-400' : 'text-zinc-400'
-                        }`}
-                      >
-                        {line}
-                      </div>
-                    );
-                  })
-                )}
-                <div ref={logsEndRef} />
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {/* Footer */}
       <div className="flex items-center justify-between">
         <span className="text-zinc-600 text-xs">UPTIME // {project.uptime}</span>
         <div className="flex gap-1">
           <button
-            onClick={() => setIsLogsOpen(v => !v)}
+            onClick={() => setIsLogsOpen(true)}
             className={`text-xs border px-2 py-1 transition-colors ${
-              isLogsOpen
-                ? 'border-zinc-500 text-zinc-300'
-                : errorCount > 0
+              errorCount > 0
                 ? 'border-zinc-800 text-red-500 hover:border-red-400'
                 : 'border-zinc-800 text-zinc-600 hover:border-zinc-400 hover:text-zinc-300'
             }`}
-            title="Toggle logs"
+            title="Voir les logs"
           >
-            LOGS{errorCount > 0 && !isLogsOpen ? ` ⚠${errorCount}` : ''}
+            LOGS{errorCount > 0 ? ` ⚠${errorCount}` : ''}
           </button>
           <button
             onClick={() => setIsEnvOpen(true)}
@@ -299,6 +246,12 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
         appName={project.name}
         isOpen={isEnvOpen}
         onClose={() => setIsEnvOpen(false)}
+      />
+      <LogModal
+        appName={project.name}
+        logs={project.logs}
+        isOpen={isLogsOpen}
+        onClose={() => setIsLogsOpen(false)}
       />
     </motion.div>
   );

@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
 import { AppConfig, AppStats } from '@/types';
-import { formatUptime, parseEnvFile } from '@/lib/utils';
+import { formatUptime, parseEnvFile, stripAnsi } from '@/lib/utils';
 
 const CONFIG_PATH = path.join(process.cwd(), 'apps.config.json');
 const MAX_LOG_LINES = 100;
@@ -142,7 +142,9 @@ function startProcess(config: AppConfig): void {
   S.processes.set(config.name, state);
   updateGitInfo(config.name);
 
-  const addLog = (msg: string) => {
+  const addLog = (raw: string) => {
+    const msg = stripAnsi(raw).trim();
+    if (!msg) return;
     const timestamp = new Date().toLocaleTimeString();
     state.logs.push(`[${timestamp}] ${msg}`);
     if (state.logs.length > MAX_LOG_LINES) state.logs.shift();
@@ -151,7 +153,7 @@ function startProcess(config: AppConfig): void {
   };
 
   readline.createInterface({ input: child.stdout! }).on('line', line => addLog(line));
-  readline.createInterface({ input: child.stderr! }).on('line', line => addLog(`ERROR: ${line}`));
+  readline.createInterface({ input: child.stderr! }).on('line', line => addLog(`STDERR: ${line}`));
 
   child.on('exit', (_code, signal) => {
     const currentState = S.processes.get(config.name);
