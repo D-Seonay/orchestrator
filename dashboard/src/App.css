@@ -62,8 +62,8 @@ header h1 {
 }
 
 .status-online {
-  background: #fafafa;
-  color: #09090b;
+  background: var(--text);
+  color: var(--bg);
 }
 
 .status-offline {
