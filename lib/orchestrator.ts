@@ -8,6 +8,9 @@ import { formatUptime, parseEnvFile } from '@/lib/utils';
 const CONFIG_PATH = path.join(process.cwd(), 'apps.config.json');
 const MAX_LOG_LINES = 100;
 
+const BUILD_PATTERNS = /building\.\.\.|rebuilding\.\.\.|compiling|webpack is (watching|compiling)/i;
+const READY_PATTERNS = /compiled successfully|compiled with warnings|ready|listening on|server started|application running|started server|watching for/i;
+
 interface ProcessState {
   config: AppConfig;
   child: ChildProcess | null;
@@ -19,6 +22,7 @@ interface ProcessState {
   git: { branch: string; dirty: boolean; sync: string };
   resources: { cpu: string; ram: string };
   lastUsage?: { time: number; cpuTime: number };
+  buildState?: 'building' | 'ready';
 }
 
 // Global state survives Next.js hot reloads and module isolation between
@@ -121,6 +125,7 @@ function startProcess(config: AppConfig): void {
     restarts: (base as ProcessState).restarts + 1,
     startTime: Date.now(),
     manualRestart: false,
+    buildState: undefined,
   };
 
   const args = config.args
@@ -141,6 +146,8 @@ function startProcess(config: AppConfig): void {
     const timestamp = new Date().toLocaleTimeString();
     state.logs.push(`[${timestamp}] ${msg}`);
     if (state.logs.length > MAX_LOG_LINES) state.logs.shift();
+    if (BUILD_PATTERNS.test(msg)) state.buildState = 'building';
+    else if (READY_PATTERNS.test(msg)) state.buildState = 'ready';
   };
 
   readline.createInterface({ input: child.stdout! }).on('line', line => addLog(line));
@@ -266,7 +273,9 @@ export const orchestrator = {
         args: app.args,
         cwd: app.cwd,
         env: app.env,
-        status: (isOnline ? 'Online' : state.shouldRun ? 'Restarting' : 'Stopped') as AppStats['status'],
+        status: (isOnline
+          ? (state.buildState === 'building' ? 'Building' : 'Online')
+          : state.shouldRun ? 'Restarting' : 'Stopped') as AppStats['status'],
         restarts: state.restarts || 0,
         uptime: formatUptime(uptime),
         cpu: state.resources?.cpu || '0%',

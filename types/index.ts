@@ -7,7 +7,7 @@ export interface AppConfig {
 }
 
 export interface AppStats extends AppConfig {
-  status: 'Online' | 'Stopped' | 'Restarting';
+  status: 'Online' | 'Stopped' | 'Restarting' | 'Building';
   restarts: number;
   uptime: string;
   cpu: string;

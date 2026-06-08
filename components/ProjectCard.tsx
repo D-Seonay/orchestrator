@@ -33,10 +33,11 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
   }, [project.logs, isLogsOpen]);
 
   const isOnline = project.status === 'Online';
-  const statusColor = isOnline
-    ? 'text-green-400'
-    : project.status === 'Restarting'
-    ? 'text-yellow-400'
+  const isBuilding = project.status === 'Building';
+  const statusColor =
+    isOnline ? 'text-green-400'
+    : isBuilding ? 'text-cyan-400'
+    : project.status === 'Restarting' ? 'text-yellow-400'
     : 'text-red-400';
 
   const envCount = Object.keys(project.env || {}).length;
@@ -81,8 +82,8 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
         </h2>
         <motion.span
           className={`text-xs uppercase ${statusColor}`}
-          animate={isOnline ? { opacity: [0.5, 1, 0.5] } : { opacity: 1 }}
-          transition={isOnline ? { repeat: Infinity, duration: 3 } : {}}
+          animate={(isOnline || isBuilding) ? { opacity: [0.5, 1, 0.5] } : { opacity: 1 }}
+          transition={(isOnline || isBuilding) ? { repeat: Infinity, duration: isBuilding ? 1 : 3 } : {}}
         >
           ● {project.status}
         </motion.span>
