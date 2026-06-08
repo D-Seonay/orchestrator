@@ -1,0 +1,23 @@
+[
+  {
+    "name": "front-semaphore",
+    "script": "./node_modules/@angular/cli/bin/ng.js",
+    "args": "serve front-semaphore",
+    "cwd": "C:/Repositories/AtoolDev/semaphore/front-semaphore"
+  },
+  {
+    "name": "base-semaphore",
+    "script": "app.js",
+    "cwd": "C:/Repositories/AtoolDev/semaphore/base-semaphore"
+  },
+  {
+    "name": "purchase-semaphore",
+    "script": "app.js",
+    "cwd": "C:/Repositories/AtoolDev/semaphore/purchase-semaphore"
+  },
+  {
+    "name": "stock-semaphore",
+    "script": "app.js",
+    "cwd": "C:/Repositories/AtoolDev/semaphore/stock-semaphore"
+  }
+]

@@ -4,7 +4,7 @@ const path = require('path');
 const readline = require('readline');
 const http = require('http');
 const url = require('url');
-const appsConfig = require('./apps.config.js');
+const appsConfig = require('./apps.config.json');
 
 const processes = new Map();
 let isShuttingDown = false;
