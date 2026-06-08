@@ -1,65 +1,115 @@
-import Image from "next/image";
+'use client';
 
-export default function Home() {
+import { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import ProjectCard from '@/components/ProjectCard';
+import AddProjectModal from '@/components/AddProjectModal';
+import type { AppStats, OrchestratorStatus } from '@/types';
+
+export default function DashboardPage() {
+  const [apps, setApps] = useState<AppStats[]>([]);
+  const [masterUptime, setMasterUptime] = useState('');
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isLoaded, setIsLoaded] = useState(false);
+
+  useEffect(() => {
+    const es = new EventSource('/api/sse');
+    es.onmessage = (e) => {
+      const data: OrchestratorStatus = JSON.parse(e.data);
+      setApps(data.apps);
+      setMasterUptime(data.masterUptime);
+      setIsLoaded(true);
+    };
+    es.onerror = () => es.close();
+    return () => es.close();
+  }, []);
+
+  const handleAction = async (name: string, action: 'start' | 'stop' | 'restart') => {
+    await fetch(`/api/apps/${encodeURIComponent(name)}/action`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }),
+    });
+  };
+
+  const handleUpdate = async (name: string, patch: Record<string, unknown>) => {
+    await fetch(`/api/apps/${encodeURIComponent(name)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+  };
+
+  const handleDelete = async (name: string) => {
+    if (!confirm(`Delete ${name}?`)) return;
+    await fetch(`/api/apps/${encodeURIComponent(name)}`, { method: 'DELETE' });
+  };
+
+  const handleAdd = async (data: { name: string; script: string; args: string[]; cwd: string }) => {
+    const res = await fetch('/api/apps', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Failed to deploy');
+    }
+    setIsModalOpen(false);
+  };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+    <div className="p-6 min-h-screen">
+      <header className="flex items-start justify-between mb-8">
+        <div>
+          <motion.h1
+            className="text-3xl font-bold tracking-tighter uppercase leading-tight"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 1, ease: [0.16, 1, 0.3, 1] }}
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
+            ORCHESTRATOR<br />PRO_DASHBOARD
+          </motion.h1>
+          {masterUptime && (
+            <span className="text-zinc-500 text-xs mt-1 block">
+              UPTIME // {masterUptime}
+            </span>
+          )}
+        </div>
+        <motion.button
+          onClick={() => setIsModalOpen(true)}
+          className="border border-zinc-700 px-4 py-2 text-sm uppercase tracking-widest hover:border-white hover:text-white transition-colors text-zinc-400"
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+        >
+          + DEPLOY
+        </motion.button>
+      </header>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <AnimatePresence mode="popLayout">
+          {apps.map(app => (
+            <ProjectCard
+              key={app.name}
+              project={app}
+              onAction={action => handleAction(app.name, action)}
+              onUpdate={patch => handleUpdate(app.name, patch)}
+              onDelete={() => handleDelete(app.name)}
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+          ))}
+        </AnimatePresence>
+        {isLoaded && apps.length === 0 && (
+          <p className="text-zinc-600 uppercase tracking-widest text-xs col-span-full">
+            NO PROJECTS FOUND. CLICK + DEPLOY TO START.
+          </p>
+        )}
+      </div>
+
+      <AddProjectModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onAdd={handleAdd}
+      />
     </div>
   );
 }
