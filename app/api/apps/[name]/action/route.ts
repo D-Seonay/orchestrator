@@ -7,6 +7,10 @@ export async function POST(req: NextRequest, { params }: Params) {
   const { name } = await params;
   const appName = decodeURIComponent(name);
 
+  if (!orchestrator.getAppsConfig().find(a => a.name === appName)) {
+    return NextResponse.json({ error: 'App not found' }, { status: 404 });
+  }
+
   let body: { action?: string };
   try {
     body = await req.json();

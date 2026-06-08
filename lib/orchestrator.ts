@@ -41,7 +41,8 @@ function updateGitInfo(name: string): void {
     const lines = stdout.split('\n');
     const branch = (lines[0] || '').trim();
     if (!branch) return;
-    const porcelain = stdout.split(branch)[1] || '';
+    const firstNewline = stdout.indexOf('\n');
+    const porcelain = firstNewline !== -1 ? stdout.slice(firstNewline + 1) : '';
     const statusLines = porcelain.split('\n').filter(l => l.trim().length > 0);
     const isDirty = statusLines.some(l => !l.match(/^\d+\t\d+$/));
     let sync = '';
