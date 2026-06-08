@@ -1,6 +1,7 @@
 import fs from 'fs';
 
 export function formatUptime(seconds: number): string {
+  seconds = Math.floor(seconds);
   if (seconds >= 3600) {
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
