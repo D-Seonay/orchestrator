@@ -1,3 +1,16 @@
+/**
+ * Setup Wizard
+ * 
+ * This script automates the initialization of all projects defined in `apps.config.json`.
+ * It performs the following steps for each project:
+ * 1. CLONE: Clones the repository if the target directory doesn't exist (requires `repository` field).
+ * 2. INSTALL: Runs the install command if `node_modules` is missing (default: `npm install`).
+ * 3. ENV: Creates a `.env` file from `.env.example` or `.env.template` if it doesn't exist.
+ * 4. BUILD: Runs the build command (default: `npm run build`).
+ * 
+ * Usage: npm run setup
+ */
+
 import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
