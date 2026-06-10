@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ProjectCard from '@/components/ProjectCard';
 import ProjectRow from '@/components/ProjectRow';
 import AddProjectModal from '@/components/AddProjectModal';
+import DeleteProjectModal from '@/components/DeleteProjectModal';
 import GroupBar from '@/components/GroupBar';
 import type { AppStats, OrchestratorStatus } from '@/types';
 
@@ -27,6 +28,7 @@ export default function DashboardPage() {
   const [apps, setApps] = useState<AppStats[]>([]);
   const [masterUptime, setMasterUptime] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [projectToDelete, setProjectToDelete] = useState<string | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
@@ -141,21 +143,22 @@ export default function DashboardPage() {
   };
 
   const handleDelete = async (name: string) => {
-    if (!confirm(`Delete ${name}?`)) return;
     await fetch(`/api/apps/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    setProjectToDelete(null);
   };
 
-  const handleAdd = async (data: { name: string; script: string; args: string[]; cwd: string }) => {
+  const handleAdd = async (data: { name: string; type: 'node' | 'docker'; script: string; args: string[]; cwd: string; ports?: string[] }) => {
     const res = await fetch('/api/apps', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.error || 'Failed to deploy');
+      throw new Error(err.message || 'Failed to add project');
     }
     setIsModalOpen(false);
   };
+
 
   // Group filtered apps
   const groupMap = new Map<string, AppStats[]>();
@@ -317,7 +320,7 @@ export default function DashboardPage() {
                           project={app}
                           onAction={action => handleAction(app.name, action)}
                           onUpdate={patch => handleUpdate(app.name, patch)}
-                          onDelete={() => handleDelete(app.name)}
+                          onDelete={() => setProjectToDelete(app.name)}
                         />
                       );
                     })}
@@ -334,7 +337,7 @@ export default function DashboardPage() {
                         focused={focusedIndex === idx}
                         onFocus={() => setFocusedIndex(idx)}
                         onAction={action => handleAction(app.name, action)}
-                        onDelete={() => handleDelete(app.name)}
+                        onDelete={() => setProjectToDelete(app.name)}
                       />
                     );
                   })}
@@ -352,6 +355,12 @@ export default function DashboardPage() {
       </div>
 
       <AddProjectModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onAdd={handleAdd} />
+      <DeleteProjectModal 
+        isOpen={!!projectToDelete} 
+        onClose={() => setProjectToDelete(null)} 
+        onConfirm={() => projectToDelete && handleDelete(projectToDelete)} 
+        projectName={projectToDelete || ''} 
+      />
     </div>
   );
 }

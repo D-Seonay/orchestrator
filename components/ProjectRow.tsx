@@ -45,9 +45,14 @@ export default function ProjectRow({ project, focused, onAction, onDelete, onFoc
         <span className={`text-xs shrink-0 ${statusColor(project.status)}`}>●</span>
 
         {/* Name */}
-        <span className="text-xs font-bold uppercase tracking-wider w-44 truncate shrink-0">
-          {project.name}
-        </span>
+        <div className="flex items-center gap-2 w-44 shrink-0 overflow-hidden">
+          <span className="text-[9px] px-1 border border-zinc-800 text-zinc-600 uppercase shrink-0">
+            {project.type === 'docker' ? 'DOCK' : 'NODE'}
+          </span>
+          <span className="text-xs font-bold uppercase tracking-wider truncate">
+            {project.name}
+          </span>
+        </div>
 
         {/* Status label */}
         <span className={`text-xs w-20 shrink-0 uppercase ${statusColor(project.status)}`}>

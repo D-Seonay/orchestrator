@@ -22,6 +22,8 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
     script: project.script || '',
     args: (Array.isArray(project.args) ? project.args : project.args ? [project.args] : []).join(' '),
     cwd: project.cwd || '',
+    ports: (project.ports || []).join(', '),
+    language: (project.env?.OPTION === '1' ? 'fr' : project.env?.OPTION === '2' ? 'en' : project.env?.OPTION === '3' ? 'es' : '') as '' | 'fr' | 'en' | 'es',
   });
   const [envEntries, setEnvEntries] = useState<{ key: string; value: string }[]>(
     Object.entries(project.env || {}).map(([k, v]) => ({ key: k, value: v }))
@@ -41,14 +43,25 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
   const errorCount = project.logs.filter(l => l.includes('ERROR')).length;
 
   const handleSave = () => {
-    const env = Object.fromEntries(
+    let env = Object.fromEntries(
       envEntries.filter(e => e.key.trim() !== '').map(e => [e.key.trim(), e.value])
     );
+
+    // Apply language selection to env
+    if (editData.language) {
+      env.OPTION = editData.language === 'fr' ? '1' : editData.language === 'en' ? '2' : '3';
+    } else if (env.OPTION === '1' || env.OPTION === '2' || env.OPTION === '3') {
+      // If language was cleared, remove the mapped OPTION if it matches one of our presets
+      delete env.OPTION;
+    }
+
     onUpdate({
       script: editData.script,
       args: editData.args.split(' ').filter(Boolean),
       cwd: editData.cwd,
       env,
+      // @ts-ignore
+      ports: editData.ports.split(',').map(p => p.trim()).filter(Boolean),
     });
     setIsEditing(false);
   };
@@ -74,9 +87,14 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
     >
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="font-bold text-sm uppercase tracking-wider truncate max-w-[60%]">
-          {project.name}
-        </h2>
+        <div className="flex items-center gap-2 truncate max-w-[60%]">
+          <span className="text-[10px] px-1 border border-zinc-700 text-zinc-500 uppercase">
+            {project.type === 'docker' ? 'DOCKER' : 'NODE'}
+          </span>
+          <h2 className="font-bold text-sm uppercase tracking-wider truncate">
+            {project.name}
+          </h2>
+        </div>
         <motion.span
           className={`text-xs uppercase ${statusColor}`}
           animate={(isOnline || isBuilding) ? { opacity: [0.5, 1, 0.5] } : isCrashed ? { opacity: 1 } : { opacity: 1 }}
@@ -102,20 +120,68 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
       >
         {isEditing ? (
           <div className="flex flex-col gap-2" onClick={e => e.stopPropagation()}>
-            {([
-              { label: 'SCRIPT', key: 'script' as const },
-              { label: 'ARGS', key: 'args' as const },
-              { label: 'CWD', key: 'cwd' as const },
-            ] as const).map(({ label, key }) => (
-              <div key={key}>
-                <label className="text-zinc-500 text-xs uppercase tracking-widest block mb-1">{label}</label>
+            <div>
+              <label className="text-zinc-500 text-xs uppercase tracking-widest block mb-1">
+                {project.type === 'docker' ? 'DOCKERFILE' : 'SCRIPT'}
+              </label>
+              <input
+                className="w-full bg-black border border-zinc-700 px-2 py-1 text-xs text-white focus:outline-none focus:border-zinc-400"
+                value={editData.script}
+                onChange={e => setEditData({ ...editData, script: e.target.value })}
+              />
+            </div>
+
+            {project.type === 'node' ? (
+              <div>
+                <label className="text-zinc-500 text-xs uppercase tracking-widest block mb-1">ARGS</label>
                 <input
                   className="w-full bg-black border border-zinc-700 px-2 py-1 text-xs text-white focus:outline-none focus:border-zinc-400"
-                  value={editData[key]}
-                  onChange={e => setEditData({ ...editData, [key]: e.target.value })}
+                  value={editData.args}
+                  onChange={e => setEditData({ ...editData, args: e.target.value })}
                 />
               </div>
-            ))}
+            ) : (
+              <div>
+                <label className="text-zinc-500 text-xs uppercase tracking-widest block mb-1">PORTS</label>
+                <input
+                  className="w-full bg-black border border-zinc-700 px-2 py-1 text-xs text-white focus:outline-none focus:border-zinc-400"
+                  value={editData.ports}
+                  onChange={e => setEditData({ ...editData, ports: e.target.value })}
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="text-zinc-500 text-xs uppercase tracking-widest block mb-1">CWD</label>
+              <input
+                className="w-full bg-black border border-zinc-700 px-2 py-1 text-xs text-white focus:outline-none focus:border-zinc-400"
+                value={editData.cwd}
+                onChange={e => setEditData({ ...editData, cwd: e.target.value })}
+              />
+            </div>
+
+            {/* Language Selection */}
+            <div>
+              <label className="text-zinc-500 text-xs uppercase tracking-widest block mb-1">DATABASE_LANGUAGE</label>
+              <div className="flex gap-1">
+                {[
+                  { label: 'FR', value: 'fr' as const },
+                  { label: 'EN', value: 'en' as const },
+                  { label: 'ES', value: 'es' as const },
+                ].map(lang => (
+                  <button
+                    key={lang.value}
+                    type="button"
+                    onClick={() => setEditData({ ...editData, language: editData.language === lang.value ? '' : lang.value })}
+                    className={`flex-1 px-1 py-1 text-[9px] uppercase tracking-tighter border ${
+                      editData.language === lang.value ? 'bg-zinc-100 text-black border-white' : 'border-zinc-800 text-zinc-500 hover:border-zinc-600'
+                    }`}
+                  >
+                    {lang.label}
+                  </button>
+                ))}
+              </div>
+            </div>
 
             {/* ENV VARIABLES */}
             <div>
@@ -174,8 +240,10 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
         ) : (
           <>
             <div className="flex justify-between gap-2">
-              <span className="text-zinc-500 text-xs uppercase tracking-widest shrink-0">LAUNCH_SCRIPT</span>
-              <span className="text-xs text-zinc-300 truncate">{project.script || 'N/A'}</span>
+              <span className="text-zinc-500 text-xs uppercase tracking-widest shrink-0">
+                {project.type === 'docker' ? 'DOCKERFILE' : 'LAUNCH_SCRIPT'}
+              </span>
+              <span className="text-xs text-zinc-300 truncate">{project.script || (project.type === 'docker' ? 'Dockerfile' : 'N/A')}</span>
             </div>
             <div className="flex justify-between gap-2">
               <span className="text-zinc-500 text-xs uppercase tracking-widest shrink-0">WORKING_DIR</span>

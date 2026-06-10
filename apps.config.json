@@ -4,24 +4,28 @@
     "script": "./node_modules/@angular/cli/bin/ng.js",
     "args": "serve front-semaphore",
     "cwd": "C:/Repositories/AtoolDev/semaphore/front-semaphore",
-    "env": {}
+    "env": {},
+    "group": "semaphore"
   },
   {
     "name": "base-semaphore",
     "script": "app.js",
     "args": [],
-    "cwd": "C:/Repositories/AtoolDev/semaphore/base-semaphore"
+    "cwd": "C:/Repositories/AtoolDev/semaphore/base-semaphore",
+    "group": "semaphore"
   },
   {
     "name": "purchase-semaphore",
     "script": "app.js",
     "args": [],
-    "cwd": "C:/Repositories/AtoolDev/semaphore/purchase-semaphore"
+    "cwd": "C:/Repositories/AtoolDev/semaphore/purchase-semaphore",
+    "group": "semaphore"
   },
   {
     "name": "stock-semaphore",
     "script": "app.js",
     "args": [],
-    "cwd": "C:/Repositories/AtoolDev/semaphore/stock-semaphore"
+    "cwd": "C:/Repositories/AtoolDev/semaphore/stock-semaphore",
+    "group": "semaphore"
   }
 ]

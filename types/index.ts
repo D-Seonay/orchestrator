@@ -1,10 +1,14 @@
 export interface AppConfig {
   name: string;
+  type?: 'node' | 'docker';
   script: string;
   args?: string | string[];
   cwd?: string;
   env?: Record<string, string>;
   group?: string;
+  ports?: string[];
+  dockerfile?: string;
+  autoStart?: boolean;
 }
 
 export interface AppStats extends AppConfig {

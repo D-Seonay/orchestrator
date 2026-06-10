@@ -15,13 +15,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  if (!body.name || !body.script) {
-    return NextResponse.json({ error: 'Missing name or script' }, { status: 400 });
+  if (!body.name) {
+    return NextResponse.json({ error: 'Missing name' }, { status: 400 });
   }
 
   const name = body.name as string;
+  const type = (body.type || 'node') as 'node' | 'docker';
   const script = body.script as string;
   const cwd = body.cwd as string | undefined;
+
+  if (type === 'node' && !script) {
+    return NextResponse.json({ error: 'Missing script' }, { status: 400 });
+  }
 
   if (orchestrator.getAppsConfig().find(a => a.name === name)) {
     return NextResponse.json({ error: 'App already exists' }, { status: 400 });
@@ -32,8 +37,12 @@ export async function POST(req: NextRequest) {
   }
 
   const checkCwd = cwd || process.cwd();
-  if (!fs.existsSync(path.resolve(checkCwd, script))) {
+  if (type === 'node' && !fs.existsSync(path.resolve(checkCwd, script))) {
     return NextResponse.json({ error: 'Script path does not exist' }, { status: 400 });
+  }
+
+  if (type === 'docker' && script && !fs.existsSync(path.resolve(checkCwd, script))) {
+    return NextResponse.json({ error: 'Dockerfile path does not exist' }, { status: 400 });
   }
 
   orchestrator.add(body as unknown as Parameters<typeof orchestrator.add>[0]);

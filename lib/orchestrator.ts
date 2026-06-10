@@ -79,8 +79,24 @@ function updateGitInfo(name: string): void {
 
 function updateResourceUsage(name: string): void {
   const state = S.processes.get(name);
-  if (!state || !state.child || state.child.killed || !state.child.pid) {
-    if (state) state.resources = { cpu: '0%', ram: '0MB' };
+  if (!state) return;
+
+  if (state.config.type === 'docker') {
+    const containerName = `dashboard-${name}`;
+    const cmd = `docker stats ${containerName} --no-stream --format "{{.CPUPerc}},{{.MemUsage}}"`;
+    exec(cmd, (err, stdout) => {
+      if (err || !stdout) {
+        state.resources = { cpu: '0%', ram: '0MB' };
+        return;
+      }
+      const [cpu, mem] = stdout.split(',');
+      state.resources = { cpu: cpu?.trim() || '0%', ram: mem?.split(' / ')[0]?.trim() || '0MB' };
+    });
+    return;
+  }
+
+  if (!state.child || state.child.killed || !state.child.pid) {
+    state.resources = { cpu: '0%', ram: '0MB' };
     return;
   }
   const pid = state.child.pid;
@@ -105,32 +121,116 @@ function updateResourceUsage(name: string): void {
   });
 }
 
-function startProcess(config: AppConfig): void {
+function ensureState(config: AppConfig): ProcessState {
   const existing = S.processes.get(config.name);
-  const base = existing ?? {
-    restarts: -1,
+  if (existing) {
+    existing.config = config;
+    return existing;
+  }
+
+  const state: ProcessState = {
+    config,
+    child: null,
+    shouldRun: false,
+    manualRestart: false,
+    restarts: 0,
+    startTime: null,
     logs: [],
     git: { branch: '...', dirty: false, sync: '' },
     resources: { cpu: '0%', ram: '0MB' },
+    crashTimes: [],
+    circuitOpen: false,
+  };
+  S.processes.set(config.name, state);
+  return state;
+}
+
+function startProcess(config: AppConfig): void {
+  ensureState(config);
+  const state = S.processes.get(config.name)!;
+  
+  state.shouldRun = true;
+  state.restarts = state.startTime ? state.restarts + 1 : state.restarts;
+  state.startTime = Date.now();
+  state.manualRestart = false;
+  state.buildState = undefined;
+  state.circuitOpen = false;
+
+  const addLog = (raw: string) => {
+    const msg = stripAnsi(raw).trim();
+    if (!msg) return;
+    const timestamp = new Date().toLocaleTimeString();
+    state.logs.push(`[${timestamp}] ${msg}`);
+    if (state.logs.length > MAX_LOG_LINES) state.logs.shift();
+    if (BUILD_PATTERNS.test(msg)) state.buildState = 'building';
+    else if (READY_PATTERNS.test(msg)) state.buildState = 'ready';
   };
 
+  if (config.type === 'docker') {
+    state.buildState = 'building';
+    const containerName = `dashboard-${config.name}`;
+    const dockerfilePath = config.dockerfile || config.script || 'Dockerfile';
+    
+    // 1. Build
+    addLog(`DOCKER: Building image dashboard-${config.name}...`);
+    const build = spawn('docker', ['build', '-t', containerName, '-f', dockerfilePath, '.'], {
+      cwd: config.cwd || process.cwd(),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    readline.createInterface({ input: build.stdout! }).on('line', line => addLog(line));
+    readline.createInterface({ input: build.stderr! }).on('line', line => addLog(`BUILD ERR: ${line}`));
+
+    build.on('exit', (code) => {
+      if (code !== 0) {
+        addLog(`DOCKER: Build failed with code ${code}`);
+        state.buildState = undefined;
+        S.processes.set(config.name, { ...state, child: null });
+        return;
+      }
+
+      addLog(`DOCKER: Build successful. Starting container...`);
+      state.buildState = 'ready';
+
+      // 2. Run
+      const envFilePath = path.join(config.cwd || process.cwd(), '.env');
+      const namedEnvPath = path.join(process.cwd(), `.env.${config.name}`);
+      const dotEnv = parseEnvFile(fs.existsSync(envFilePath) ? envFilePath : namedEnvPath);
+      const combinedEnv = { ...dotEnv, ...(config.env ?? {}) };
+
+      const runArgs = ['run', '--rm', '--name', containerName];
+      Object.entries(combinedEnv).forEach(([k, v]) => {
+        runArgs.push('-e', `${k}=${v}`);
+      });
+      (config.ports || []).forEach(p => {
+        runArgs.push('-p', p);
+      });
+      runArgs.push(containerName);
+
+      const child = spawn('docker', runArgs, {
+        cwd: config.cwd || process.cwd(),
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      state.child = child;
+      S.processes.set(config.name, state);
+
+      readline.createInterface({ input: child.stdout! }).on('line', line => addLog(line));
+      readline.createInterface({ input: child.stderr! }).on('line', line => addLog(`STDERR: ${line}`));
+
+      child.on('exit', (_code, signal) => handleExit(config.name, child, signal));
+    });
+
+    S.processes.set(config.name, state);
+    return;
+  }
+
+  // Node.js implementation
   const envFilePath = path.join(config.cwd || process.cwd(), '.env');
   const namedEnvPath = path.join(process.cwd(), `.env.${config.name}`);
   const dotEnv = parseEnvFile(
     fs.existsSync(envFilePath) ? envFilePath : namedEnvPath
   );
-
-  const state: ProcessState = {
-    ...(base as ProcessState),
-    config,
-    shouldRun: true,
-    restarts: (base as ProcessState).restarts + 1,
-    startTime: Date.now(),
-    manualRestart: false,
-    buildState: undefined,
-    crashTimes: (base as ProcessState).crashTimes ?? [],
-    circuitOpen: false, // always reset on explicit start
-  };
 
   const args = config.args
     ? [config.script, ...(Array.isArray(config.args) ? config.args : config.args.split(' '))]
@@ -146,55 +246,47 @@ function startProcess(config: AppConfig): void {
   S.processes.set(config.name, state);
   updateGitInfo(config.name);
 
-  const addLog = (raw: string) => {
-    const msg = stripAnsi(raw).trim();
-    if (!msg) return;
-    const timestamp = new Date().toLocaleTimeString();
-    state.logs.push(`[${timestamp}] ${msg}`);
-    if (state.logs.length > MAX_LOG_LINES) state.logs.shift();
-    if (BUILD_PATTERNS.test(msg)) state.buildState = 'building';
-    else if (READY_PATTERNS.test(msg)) state.buildState = 'ready';
-  };
-
   readline.createInterface({ input: child.stdout! }).on('line', line => addLog(line));
   readline.createInterface({ input: child.stderr! }).on('line', line => addLog(`STDERR: ${line}`));
 
-  child.on('exit', (_code, signal) => {
-    const currentState = S.processes.get(config.name);
-    if (!currentState || currentState.child !== child) return;
+  child.on('exit', (_code, signal) => handleExit(config.name, child, signal));
+}
 
-    const isManual = currentState.manualRestart;
-    const isExplicitKill = signal === 'SIGTERM' || signal === 'SIGKILL';
-    const isCrash = currentState.shouldRun && !isManual && !isExplicitKill;
+function handleExit(name: string, child: ChildProcess, signal: string | null): void {
+  const currentState = S.processes.get(name);
+  if (!currentState || currentState.child !== child) return;
 
-    const now = Date.now();
-    const WINDOW_MS = 60_000;
-    const CRASH_THRESHOLD = 5;
+  const isManual = currentState.manualRestart;
+  const isExplicitKill = signal === 'SIGTERM' || signal === 'SIGKILL';
+  const isCrash = currentState.shouldRun && !isManual && !isExplicitKill;
 
-    let crashTimes = currentState.crashTimes ?? [];
-    let circuitOpen = currentState.circuitOpen ?? false;
+  const now = Date.now();
+  const WINDOW_MS = 60_000;
+  const CRASH_THRESHOLD = 5;
 
-    if (isCrash && !circuitOpen) {
-      crashTimes = [...crashTimes.filter(t => now - t < WINDOW_MS), now];
-      if (crashTimes.length >= CRASH_THRESHOLD) {
-        circuitOpen = true;
-      }
+  let crashTimes = currentState.crashTimes ?? [];
+  let circuitOpen = currentState.circuitOpen ?? false;
+
+  if (isCrash && !circuitOpen) {
+    crashTimes = [...crashTimes.filter(t => now - t < WINDOW_MS), now];
+    if (crashTimes.length >= CRASH_THRESHOLD) {
+      circuitOpen = true;
     }
+  }
 
-    const newState = { ...currentState, child: null, resources: { cpu: '0%', ram: '0MB' }, crashTimes, circuitOpen };
-    S.processes.set(config.name, newState);
+  const newState = { ...currentState, child: null, resources: { cpu: '0%', ram: '0MB' }, crashTimes, circuitOpen };
+  S.processes.set(name, newState);
 
-    if (circuitOpen && isCrash) {
-      const ts = new Date().toLocaleTimeString();
-      newState.logs.push(`[${ts}] ⚡ CIRCUIT BREAKER: ${crashTimes.length} crashes en 60s — redémarrage automatique suspendu. Reset manuel requis.`);
-      if (newState.logs.length > MAX_LOG_LINES) newState.logs.shift();
-      return;
-    }
+  if (circuitOpen && isCrash) {
+    const ts = new Date().toLocaleTimeString();
+    newState.logs.push(`[${ts}] ⚡ CIRCUIT BREAKER: ${crashTimes.length} crashes en 60s — redémarrage automatique suspendu. Reset manuel requis.`);
+    if (newState.logs.length > MAX_LOG_LINES) newState.logs.shift();
+    return;
+  }
 
-    if (currentState.shouldRun && (isManual || !isExplicitKill)) {
-      setTimeout(() => startProcess(currentState.config), isManual ? 500 : 1500);
-    }
-  });
+  if (currentState.shouldRun && (isManual || !isExplicitKill)) {
+    setTimeout(() => startProcess(currentState.config), isManual ? 500 : 1500);
+  }
 }
 
 export const orchestrator = {
@@ -206,7 +298,18 @@ export const orchestrator = {
     } catch {
       S.appsConfig = [];
     }
-    S.appsConfig.forEach(startProcess);
+    
+    S.appsConfig.forEach(app => {
+      ensureState(app);
+      
+      const isDocker = app.type === 'docker';
+      const shouldAutoStart = app.autoStart !== undefined ? app.autoStart : !isDocker;
+      
+      if (shouldAutoStart) {
+        startProcess(app);
+      }
+    });
+
     setInterval(() => {
       S.appsConfig.forEach(app => {
         updateGitInfo(app.name);
@@ -227,7 +330,11 @@ export const orchestrator = {
     const state = S.processes.get(name);
     if (state) {
       state.shouldRun = false;
-      state.child?.kill('SIGTERM');
+      if (state.config.type === 'docker') {
+        exec(`docker stop dashboard-${name}`);
+      } else {
+        state.child?.kill('SIGTERM');
+      }
     }
   },
 
@@ -235,7 +342,10 @@ export const orchestrator = {
     const state = S.processes.get(name);
     if (state) {
       state.shouldRun = true;
-      if (state.child) {
+      if (state.config.type === 'docker') {
+        state.manualRestart = true;
+        exec(`docker stop dashboard-${name}`);
+      } else if (state.child) {
         state.manualRestart = true;
         state.child.kill('SIGTERM');
       } else {
@@ -305,8 +415,8 @@ export const orchestrator = {
         cwd: app.cwd,
         env: app.env,
         group: app.group,
-        status: (isOnline
-          ? (state.buildState === 'building' ? 'Building' : 'Online')
+        status: (state.buildState === 'building' ? 'Building'
+          : isOnline ? 'Online'
           : state.circuitOpen ? 'Crashed'
           : state.shouldRun ? 'Restarting' : 'Stopped') as AppStats['status'],
         restarts: state.restarts || 0,
