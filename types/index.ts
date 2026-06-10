@@ -9,6 +9,9 @@ export interface AppConfig {
   ports?: string[];
   dockerfile?: string;
   autoStart?: boolean;
+  repository?: string;
+  installCommand?: string;
+  buildCommand?: string;
 }
 
 export interface AppStats extends AppConfig {

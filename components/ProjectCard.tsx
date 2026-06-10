@@ -71,6 +71,8 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
       script: project.script || '',
       args: (Array.isArray(project.args) ? project.args : project.args ? [project.args] : []).join(' '),
       cwd: project.cwd || '',
+      ports: (project.ports || []).join(', '),
+      language: (project.env?.OPTION === '1' ? 'fr' : project.env?.OPTION === '2' ? 'en' : project.env?.OPTION === '3' ? 'es' : '') as '' | 'fr' | 'en' | 'es',
     });
     setEnvEntries(Object.entries(project.env || {}).map(([k, v]) => ({ key: k, value: v })));
     setIsEditing(false);

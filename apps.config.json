@@ -27,5 +27,15 @@
     "args": [],
     "cwd": "C:/Repositories/AtoolDev/semaphore/stock-semaphore",
     "group": "semaphore"
+  },
+  {
+    "name": "Supplies-Semaphore",
+    "type": "node",
+    "script": "run start",
+    "args": [],
+    "cwd": "C:\\Repositories\\AtoolDev\\semaphore\\supplies-semaphore",
+    "ports": [],
+    "autoStart": true,
+    "env": {}
   }
 ]
