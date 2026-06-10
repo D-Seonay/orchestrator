@@ -5,7 +5,10 @@
     "args": "serve front-semaphore",
     "cwd": "C:/Repositories/AtoolDev/semaphore/front-semaphore",
     "env": {},
-    "group": "semaphore"
+    "group": "semaphore",
+    "repository": "https://github.com/example/front-semaphore.git",
+    "installCommand": "npm install",
+    "buildCommand": "npm run build"
   },
   {
     "name": "base-semaphore",
