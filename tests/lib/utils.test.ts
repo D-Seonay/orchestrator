@@ -1,8 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatUptime, parseEnvFile, stripAnsi } from '@/lib/utils';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
+import { formatUptime, parseEnv, stripAnsi, isErrorLog } from '@/lib/utils';
 
 describe('formatUptime', () => {
   it('retourne les secondes seules en dessous de 60', () => {
@@ -24,30 +21,21 @@ describe('formatUptime', () => {
   });
 });
 
-describe('parseEnvFile', () => {
-  it('retourne un objet vide si le fichier n\'existe pas', () => {
-    expect(parseEnvFile('/chemin/inexistant/.env')).toEqual({});
+describe('parseEnv', () => {
+  it('retourne un objet vide si le contenu est vide', () => {
+    expect(parseEnv('')).toEqual({});
   });
 
   it('parse les paires KEY=VALUE', () => {
-    const tmp = path.join(os.tmpdir(), '.env-test-' + Date.now());
-    fs.writeFileSync(tmp, 'FOO=bar\nBAZ=qux\n');
-    expect(parseEnvFile(tmp)).toEqual({ FOO: 'bar', BAZ: 'qux' });
-    fs.unlinkSync(tmp);
+    expect(parseEnv('FOO=bar\nBAZ=qux\n')).toEqual({ FOO: 'bar', BAZ: 'qux' });
   });
 
   it('ignore les commentaires et lignes vides', () => {
-    const tmp = path.join(os.tmpdir(), '.env-test2-' + Date.now());
-    fs.writeFileSync(tmp, '# commentaire\n\nKEY=value\n');
-    expect(parseEnvFile(tmp)).toEqual({ KEY: 'value' });
-    fs.unlinkSync(tmp);
+    expect(parseEnv('# commentaire\n\nKEY=value\n')).toEqual({ KEY: 'value' });
   });
 
   it('retire les guillemets autour des valeurs', () => {
-    const tmp = path.join(os.tmpdir(), '.env-test3-' + Date.now());
-    fs.writeFileSync(tmp, 'A="hello world"\nB=\'single\'\n');
-    expect(parseEnvFile(tmp)).toEqual({ A: 'hello world', B: 'single' });
-    fs.unlinkSync(tmp);
+    expect(parseEnv('A="hello world"\nB=\'single\'\n')).toEqual({ A: 'hello world', B: 'single' });
   });
 });
 
@@ -64,5 +52,28 @@ describe('stripAnsi', () => {
   it('laisse le texte sans codes inchangé', () => {
     expect(stripAnsi('plain text')).toBe('plain text');
     expect(stripAnsi('')).toBe('');
+  });
+});
+
+describe('isErrorLog', () => {
+  it('ignore les logs debug sur STDERR', () => {
+    expect(isErrorLog('[09:57:19] STDERR: debug: -------------------------------------------------------')).toBe(false);
+    expect(isErrorLog('[09:57:19] STDERR: debug: Environment : development')).toBe(false);
+    expect(isErrorLog('[09:57:19] STDERR: debug: Port        : 4430')).toBe(false);
+    expect(isErrorLog('[09:57:19] STDERR: debug: Local       : http://localhost:4430')).toBe(false);
+  });
+
+  it('ignore les avertissements et informations', () => {
+    expect(isErrorLog('[warn] deprecated module')).toBe(false);
+    expect(isErrorLog('info: Server is listening on port 3000')).toBe(false);
+    expect(isErrorLog('Compiled successfully with 0 errors and 1 warning')).toBe(false);
+  });
+
+  it('détecte les vraies erreurs applicatives', () => {
+    expect(isErrorLog('[09:57:19] STDERR: Error: connect ECONNREFUSED 127.0.0.1:5432')).toBe(true);
+    expect(isErrorLog('Fatal error: out of memory')).toBe(true);
+    expect(isErrorLog('Error: listen EADDRINUSE: address already in use :::3000')).toBe(true);
+    expect(isErrorLog('UnhandledPromiseRejection: connection lost')).toBe(true);
+    expect(isErrorLog('Command failed with exit code 1')).toBe(true);
   });
 });

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { isErrorLog } from '@/lib/utils';
 
 interface Props {
   appName: string;
@@ -12,7 +13,8 @@ interface Props {
 
 function lineColor(line: string): string {
   const l = line.toLowerCase();
-  if (l.includes('stderr:') || l.includes('error') || l.includes('exception') || l.includes('fatal')) return 'text-red-400';
+  if (isErrorLog(line)) return 'text-red-400';
+  if (l.includes('debug:')) return 'text-zinc-500';
   if (l.includes('warn')) return 'text-yellow-400';
   if (l.includes('✔') || l.includes('compiled successfully') || l.includes('success')) return 'text-green-400';
   if (l.includes('building') || l.includes('compiling')) return 'text-cyan-400';
@@ -28,7 +30,7 @@ export default function LogModal({ appName, logs, isOpen, onClose }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   const filtered = logs.filter(line => {
-    if (showErrorsOnly && !line.toLowerCase().includes('error') && !line.toLowerCase().includes('stderr')) return false;
+    if (showErrorsOnly && !isErrorLog(line)) return false;
     if (filter && !line.toLowerCase().includes(filter.toLowerCase())) return false;
     return true;
   });
@@ -48,9 +50,7 @@ export default function LogModal({ appName, logs, isOpen, onClose }: Props) {
     else setAutoScroll(true);
   };
 
-  const errorCount = logs.filter(l =>
-    l.toLowerCase().includes('error') || l.toLowerCase().includes('stderr')
-  ).length;
+  const errorCount = logs.filter(isErrorLog).length;
 
   return (
     <AnimatePresence>

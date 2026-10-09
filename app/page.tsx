@@ -8,6 +8,7 @@ import AddProjectModal from '@/components/AddProjectModal';
 import DeleteProjectModal from '@/components/DeleteProjectModal';
 import GroupBar from '@/components/GroupBar';
 import type { AppStats, OrchestratorStatus } from '@/types';
+import { isErrorLog } from '@/lib/utils';
 
 type StatusFilter = 'all' | 'online' | 'stopped' | 'building' | 'error';
 type ViewMode = 'grid' | 'list';
@@ -21,7 +22,7 @@ const FILTERS: { key: StatusFilter; label: string }[] = [
 ];
 
 function hasErrors(app: AppStats): boolean {
-  return app.logs.some(l => l.toLowerCase().includes('error') || l.toLowerCase().includes('stderr'));
+  return app.logs.some(isErrorLog);
 }
 
 export default function DashboardPage() {
@@ -167,7 +168,6 @@ export default function DashboardPage() {
     }
     setIsModalOpen(false);
   };
-
 
   // Group filtered apps
   const groupMap = new Map<string, AppStats[]>();

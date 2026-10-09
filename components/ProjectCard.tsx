@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import type { AppStats } from '@/types';
 import EnvFileModal from '@/components/EnvFileModal';
 import LogModal from '@/components/LogModal';
+import { isErrorLog } from '@/lib/utils';
 
 interface Props {
   project: AppStats;
@@ -46,7 +47,7 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
     : 'text-red-400';
 
   const envCount = Object.keys(project.env || {}).length;
-  const errorCount = project.logs.filter(l => l.includes('ERROR')).length;
+  const errorCount = project.logs.filter(isErrorLog).length;
 
   const handleSave = () => {
     const env = Object.fromEntries(
@@ -201,102 +202,123 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
                   + ADD
                 </button>
               </div>
-              <div className="flex flex-col gap-1">
-                {envEntries.map((entry, i) => (
-                  <div key={i} className="flex gap-1 items-center">
+              <div className="flex flex-col gap-1 max-h-32 overflow-y-auto pr-1">
+                {envEntries.map((entry, index) => (
+                  <div key={index} className="flex gap-1 items-center">
                     <input
                       placeholder="KEY"
-                      className="w-2/5 bg-black border border-zinc-700 px-2 py-1 text-xs text-white focus:outline-none focus:border-zinc-400 placeholder-zinc-700"
+                      className="w-1/2 bg-black border border-zinc-700 px-1.5 py-0.5 text-xs text-white focus:outline-none focus:border-zinc-400"
                       value={entry.key}
                       onChange={e => {
-                        const next = [...envEntries];
-                        next[i] = { ...next[i], key: e.target.value };
-                        setEnvEntries(next);
+                        const newEntries = [...envEntries];
+                        newEntries[index].key = e.target.value;
+                        setEnvEntries(newEntries);
                       }}
                     />
-                    <span className="text-zinc-600 text-xs">=</span>
                     <input
-                      placeholder="value"
-                      className="flex-1 bg-black border border-zinc-700 px-2 py-1 text-xs text-white focus:outline-none focus:border-zinc-400 placeholder-zinc-700"
+                      placeholder="VALUE"
+                      className="w-1/2 bg-black border border-zinc-700 px-1.5 py-0.5 text-xs text-white focus:outline-none focus:border-zinc-400"
                       value={entry.value}
                       onChange={e => {
-                        const next = [...envEntries];
-                        next[i] = { ...next[i], value: e.target.value };
-                        setEnvEntries(next);
+                        const newEntries = [...envEntries];
+                        newEntries[index].value = e.target.value;
+                        setEnvEntries(newEntries);
                       }}
                     />
                     <button
-                      onClick={() => setEnvEntries(envEntries.filter((_, j) => j !== i))}
-                      className="text-zinc-600 hover:text-red-400 transition-colors text-xs px-1"
+                      onClick={() => setEnvEntries(envEntries.filter((_, i) => i !== index))}
+                      className="text-zinc-600 hover:text-red-400 text-xs px-1"
                     >
-                      ✕
+                      ×
                     </button>
                   </div>
                 ))}
                 {envEntries.length === 0 && (
-                  <span className="text-zinc-700 text-xs italic">no env vars</span>
+                  <div className="text-zinc-600 text-xs italic">Aucune variable</div>
                 )}
               </div>
             </div>
 
-            <div className="flex gap-2 mt-1">
-              <button onClick={handleSave} className="text-xs border border-zinc-600 px-3 py-1 hover:border-white hover:text-white transition-colors uppercase">SAVE</button>
-              <button onClick={handleCancel} className="text-xs text-zinc-500 hover:text-white transition-colors uppercase">CANCEL</button>
+            <div className="flex gap-2 mt-2">
+              <button
+                onClick={handleSave}
+                className="flex-1 bg-white text-black text-xs py-1 font-bold hover:bg-zinc-200 transition-colors uppercase"
+              >
+                SAVE
+              </button>
+              <button
+                onClick={handleCancel}
+                className="flex-1 border border-zinc-700 text-xs py-1 hover:border-zinc-500 transition-colors uppercase text-zinc-400"
+              >
+                CANCEL
+              </button>
             </div>
           </div>
         ) : (
           <>
-            <div className="flex justify-between gap-2">
-              <span className="text-zinc-500 text-xs uppercase tracking-widest shrink-0">
-                {project.type === 'docker' ? 'DOCKERFILE' : 'LAUNCH_SCRIPT'}
-              </span>
-              <span className="text-xs text-zinc-300 truncate">{project.script || (project.type === 'docker' ? 'Dockerfile' : 'N/A')}</span>
+            <div className="flex justify-between text-xs text-zinc-500 hover:text-zinc-400">
+              <span className="truncate max-w-[70%]">{project.script}</span>
+              <span className="text-zinc-600">click to edit</span>
             </div>
-            <div className="flex justify-between gap-2">
-              <span className="text-zinc-500 text-xs uppercase tracking-widest shrink-0">WORKING_DIR</span>
-              <span className="text-xs text-zinc-300 truncate">{project.cwd || './'}</span>
-            </div>
-            <div className="flex justify-between gap-2">
-              <span className="text-zinc-500 text-xs uppercase tracking-widest shrink-0">BRANCH</span>
-              <span className="text-xs text-yellow-400">
-                {project.git.branch}
-                {project.git.dirty ? '*' : ''}
-                {project.git.sync ? ` ${project.git.sync}` : ''}
-              </span>
-            </div>
+
+            {project.cwd && (
+              <div className="text-[10px] text-zinc-600 truncate font-mono" title={project.cwd}>
+                {project.cwd}
+              </div>
+            )}
+
+            {/* Language preset badge */}
+            {project.env?.OPTION && (
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className="text-[9px] text-zinc-600 uppercase tracking-widest">LANG:</span>
+                <span className="text-[9px] px-1 py-0.2 border border-zinc-800 text-zinc-400 font-mono">
+                  {project.env.OPTION === '1' ? 'FR' : project.env.OPTION === '2' ? 'EN' : project.env.OPTION === '3' ? 'ES' : `OPT ${project.env.OPTION}`}
+                </span>
+              </div>
+            )}
+
+            {/* Extra env vars badge */}
             {envCount > 0 && (
-              <div className="flex justify-between gap-2">
-                <span className="text-zinc-500 text-xs uppercase tracking-widest shrink-0">ENV_VARS</span>
-                <span className="text-xs text-zinc-500">{envCount} var{envCount > 1 ? 's' : ''}</span>
+              <div className="text-[9px] text-zinc-600">
+                {envCount} ENV VAR{envCount > 1 ? 'S' : ''}
               </div>
             )}
           </>
         )}
       </div>
 
-      {/* Stats */}
-      <div className="border-t border-zinc-800 pt-3 grid grid-cols-3 gap-2">
+      {/* Metrics */}
+      <div className="grid grid-cols-2 gap-2 border-t border-zinc-900 pt-2 text-xs">
         <div>
-          <div className="text-zinc-500 text-xs uppercase tracking-widest">CPU</div>
-          <div className="text-xs text-blue-400">{project.cpu}</div>
+          <span className="text-zinc-600 block text-[10px] uppercase tracking-wider">CPU</span>
+          <span className="font-bold text-zinc-300">{project.cpu}</span>
         </div>
         <div>
-          <div className="text-zinc-500 text-xs uppercase tracking-widest">RAM</div>
-          <div className="text-xs text-purple-400">{project.ram}</div>
-        </div>
-        <div>
-          <div className="text-zinc-500 text-xs uppercase tracking-widest">RESTARTS</div>
-          <div className="text-xs text-zinc-300">{project.restarts}</div>
+          <span className="text-zinc-600 block text-[10px] uppercase tracking-wider">RAM</span>
+          <span className="font-bold text-zinc-300">{project.ram}</span>
         </div>
       </div>
 
-      {/* Circuit breaker banner */}
+      {/* Git + Restarts */}
+      <div className="flex items-center justify-between text-xs text-zinc-500 border-t border-zinc-900 pt-2">
+        <div className="flex items-center gap-1 text-[11px] truncate max-w-[65%]">
+          <span className="text-zinc-600">⎇</span>
+          <span className="truncate">{project.git.branch}</span>
+          {project.git.dirty && <span className="text-yellow-500 font-bold" title="Uncommitted changes">*</span>}
+          {project.git.sync && (
+            <span className="text-zinc-500 text-[10px] font-mono ml-0.5">{project.git.sync}</span>
+          )}
+        </div>
+        <span className="text-zinc-600 text-[11px] shrink-0">↺ {project.restarts}</span>
+      </div>
+
+      {/* Circuit breaker alert banner */}
       {isCrashed && (
-        <div className="border border-red-900 bg-red-950/30 px-3 py-2 flex items-center justify-between gap-2">
-          <span className="text-red-400 text-xs">⚡ Circuit ouvert — 5 crashes en 60s</span>
+        <div className="border border-red-900/60 bg-red-950/30 p-2 flex items-center justify-between text-xs">
+          <span className="text-red-400 font-bold tracking-wider uppercase text-[11px]">⚡ CIRCUIT BREAKER</span>
           <button
             onClick={() => onAction('restart')}
-            className="text-xs border border-red-700 px-3 py-1 text-red-400 hover:border-red-400 hover:text-white transition-colors uppercase shrink-0"
+            className="border border-red-700 hover:border-red-500 text-red-300 hover:text-white px-2 py-0.5 text-[10px] uppercase tracking-wider transition-colors"
           >
             RESET
           </button>

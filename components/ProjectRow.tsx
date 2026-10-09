@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import type { AppStats } from '@/types';
 import LogModal from '@/components/LogModal';
 import { useState } from 'react';
+import { isErrorLog } from '@/lib/utils';
 
 interface Props {
   project: AppStats;
@@ -25,9 +26,7 @@ function statusColor(status: string) {
 
 export default function ProjectRow({ project, focused, onAction, onDelete, onFocus }: Props) {
   const [isLogsOpen, setIsLogsOpen] = useState(false);
-  const errorCount = project.logs.filter(l =>
-    l.toLowerCase().includes('error') || l.toLowerCase().includes('stderr')
-  ).length;
+  const errorCount = project.logs.filter(isErrorLog).length;
 
   return (
     <>

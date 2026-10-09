@@ -3,13 +3,22 @@ import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
 import { AppConfig, AppStats } from '@/types';
-import { formatUptime, parseEnvFile, stripAnsi } from '@/lib/utils';
+import { formatUptime, parseEnv, stripAnsi } from '@/lib/utils';
 
 const CONFIG_PATH = path.join(/*turbopackIgnore: true*/ process.cwd(), 'apps.config.json');
 const MAX_LOG_LINES = 100;
 
 const BUILD_PATTERNS = /building\.\.\.|rebuilding\.\.\.|compiling|webpack is (watching|compiling)/i;
 const READY_PATTERNS = /compiled successfully|compiled with warnings|ready|listening on|server started|application running|started server|watching for/i;
+
+function parseEnvFile(filePath: string): Record<string, string> {
+  if (!fs.existsSync(filePath)) return {};
+  try {
+    return parseEnv(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    return {};
+  }
+}
 
 interface ProcessState {
   config: AppConfig;
