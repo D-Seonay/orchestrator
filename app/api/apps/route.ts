@@ -37,11 +37,11 @@ export async function POST(req: NextRequest) {
   }
 
   const checkCwd = cwd || process.cwd();
-  if (type === 'node' && !fs.existsSync(path.resolve(checkCwd, script))) {
+  if (type === 'node' && !fs.existsSync(path.resolve(/*turbopackIgnore: true*/ checkCwd, script))) {
     return NextResponse.json({ error: 'Script path does not exist' }, { status: 400 });
   }
 
-  if (type === 'docker' && script && !fs.existsSync(path.resolve(checkCwd, script))) {
+  if (type === 'docker' && script && !fs.existsSync(path.resolve(/*turbopackIgnore: true*/ checkCwd, script))) {
     return NextResponse.json({ error: 'Dockerfile path does not exist' }, { status: 400 });
   }
 

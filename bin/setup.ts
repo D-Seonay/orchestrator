@@ -48,6 +48,14 @@ async function runCommand(cmd: string, args: string[], cwd: string, appName: str
   });
 }
 
+interface SetupResult {
+  name: string;
+  clone: string;
+  install: string;
+  env: string;
+  build: string;
+}
+
 async function setup() {
   if (!fs.existsSync(CONFIG_PATH)) {
     console.error(`Config file not found at ${CONFIG_PATH}`);
@@ -55,13 +63,13 @@ async function setup() {
   }
 
   const configs: AppConfig[] = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-  const results: any[] = [];
+  const results: SetupResult[] = [];
 
   console.log('\x1b[35m%s\x1b[0m', '=== Starting Setup Wizard ===\n');
 
   for (const app of configs) {
     const cwd = app.cwd || process.cwd();
-    const appResults = { 
+    const appResults: SetupResult = { 
       name: app.name, 
       clone: '-', 
       install: '-', 

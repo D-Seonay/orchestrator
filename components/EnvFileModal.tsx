@@ -19,15 +19,36 @@ export default function EnvFileModal({ appName, isOpen, onClose }: Props) {
 
   useEffect(() => {
     if (!isOpen) return;
-    setIsLoading(true);
-    setStatus('idle');
+    let ignore = false;
+
+    queueMicrotask(() => {
+      if (!ignore) {
+        setIsLoading(true);
+        setStatus('idle');
+      }
+    });
+
     fetch(`/api/apps/${encodeURIComponent(appName)}/envfile`)
       .then(r => r.json())
       .then(data => {
-        setContent(data.content ?? '');
-        setFilePath(data.path ?? '');
+        if (!ignore) {
+          setContent(data.content ?? '');
+          setFilePath(data.path ?? '');
+        }
       })
-      .finally(() => setIsLoading(false));
+      .catch((err) => {
+        if (!ignore) {
+          setErrorMsg(err instanceof Error ? err.message : 'Erreur');
+          setStatus('error');
+        }
+      })
+      .finally(() => {
+        if (!ignore) setIsLoading(false);
+      });
+
+    return () => {
+      ignore = true;
+    };
   }, [isOpen, appName]);
 
   const handleSave = async () => {

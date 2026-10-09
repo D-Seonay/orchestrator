@@ -1,36 +1,47 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface Props {
   isOpen: boolean;
   onClose: () => void;
-  onAdd: (data: { name: string; type: 'node' | 'docker'; script: string; args: string[]; cwd: string; ports?: string[] }) => Promise<void>;
+  onAdd: (data: {
+    name: string;
+    type: 'node' | 'docker';
+    script: string;
+    args: string[];
+    cwd: string;
+    ports?: string[];
+    autoStart?: boolean;
+    env?: Record<string, string>;
+  }) => Promise<void>;
 }
 
 type ValidationState = 'idle' | 'checking' | 'ok' | 'error';
 
 function usePathValidation(path: string, debounceMs = 600): ValidationState {
-  const [state, setState] = useState<ValidationState>('idle');
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const trimmed = path.trim();
+  const [asyncState, setAsyncState] = useState<ValidationState | null>(null);
 
   useEffect(() => {
-    if (!path.trim()) { setState('idle'); return; }
-    setState('checking');
-    clearTimeout(timer.current);
-    timer.current = setTimeout(async () => {
+    if (!trimmed) {
+      return;
+    }
+    const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/validate-path?path=${encodeURIComponent(path)}`);
-        setState(res.ok ? 'ok' : 'error');
+        const res = await fetch(`/api/validate-path?path=${encodeURIComponent(trimmed)}`);
+        setAsyncState(res.ok ? 'ok' : 'error');
       } catch {
-        setState('error');
+        setAsyncState('error');
       }
     }, debounceMs);
-    return () => clearTimeout(timer.current as ReturnType<typeof setTimeout>);
-  }, [path, debounceMs]);
 
-  return state;
+    return () => clearTimeout(timer);
+  }, [trimmed, debounceMs]);
+
+  if (!trimmed) return 'idle';
+  return asyncState ?? 'checking';
 }
 
 function ValidationIndicator({ state }: { state: ValidationState }) {
@@ -75,7 +86,6 @@ export default function AddProjectModal({ isOpen, onClose, onAdd }: Props) {
         args: formData.args.split(' ').filter(Boolean),
         cwd: formData.cwd,
         ports: formData.ports.split(',').map(p => p.trim()).filter(Boolean),
-        // @ts-ignore
         autoStart: formData.autoStart,
         env,
       });

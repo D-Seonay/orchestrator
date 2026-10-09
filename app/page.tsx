@@ -147,7 +147,16 @@ export default function DashboardPage() {
     setProjectToDelete(null);
   };
 
-  const handleAdd = async (data: { name: string; type: 'node' | 'docker'; script: string; args: string[]; cwd: string; ports?: string[] }) => {
+  const handleAdd = async (data: {
+    name: string;
+    type: 'node' | 'docker';
+    script: string;
+    args: string[];
+    cwd: string;
+    ports?: string[];
+    autoStart?: boolean;
+    env?: Record<string, string>;
+  }) => {
     const res = await fetch('/api/apps', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -313,7 +322,7 @@ export default function DashboardPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mb-2">
                   <AnimatePresence mode="popLayout">
                     {groupApps.map(app => {
-                      const idx = globalIdx++;
+                      globalIdx++;
                       return (
                         <ProjectCard
                           key={app.name}

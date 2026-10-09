@@ -44,7 +44,7 @@ export default function DeleteProjectModal({ isOpen, onClose, onConfirm, project
             <div className="mb-8">
               <p className="text-xs text-zinc-400 leading-relaxed uppercase tracking-wider">
                 Êtes-vous sûr de vouloir supprimer <span className="text-white font-bold">[{projectName}]</span> ? 
-                Toutes les configurations et l'historique des logs seront perdus.
+                Toutes les configurations et l&apos;historique des logs seront perdus.
               </p>
             </div>
 

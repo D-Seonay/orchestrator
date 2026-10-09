@@ -11,14 +11,14 @@ function resolveEnvFilePath(appName: string, cwd?: string): string {
     const cwdEnv = path.join(cwd, '.env');
     if (fs.existsSync(cwdEnv)) return cwdEnv;
   }
-  return path.join(process.cwd(), `.env.${appName}`);
+  return path.join(/*turbopackIgnore: true*/ process.cwd(), `.env.${appName}`);
 }
 
 // Read cwd from apps.config.json directly — avoids orchestrator module dependency
 function getAppCwd(appName: string): string | undefined {
   try {
     const config: { name: string; cwd?: string }[] = JSON.parse(
-      fs.readFileSync(path.join(process.cwd(), 'apps.config.json'), 'utf8')
+      fs.readFileSync(path.join(/*turbopackIgnore: true*/ process.cwd(), 'apps.config.json'), 'utf8')
     );
     return config.find(a => a.name === appName)?.cwd;
   } catch {

@@ -9,7 +9,13 @@ import LogModal from '@/components/LogModal';
 interface Props {
   project: AppStats;
   onAction: (action: 'start' | 'stop' | 'restart' | 'gitpull') => void;
-  onUpdate: (patch: { script?: string; args?: string[]; cwd?: string; env?: Record<string, string> }) => void;
+  onUpdate: (patch: {
+    script?: string;
+    args?: string[];
+    cwd?: string;
+    env?: Record<string, string>;
+    ports?: string[];
+  }) => void;
   onDelete: () => void;
 }
 
@@ -43,7 +49,7 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
   const errorCount = project.logs.filter(l => l.includes('ERROR')).length;
 
   const handleSave = () => {
-    let env = Object.fromEntries(
+    const env = Object.fromEntries(
       envEntries.filter(e => e.key.trim() !== '').map(e => [e.key.trim(), e.value])
     );
 
@@ -60,7 +66,6 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
       args: editData.args.split(' ').filter(Boolean),
       cwd: editData.cwd,
       env,
-      // @ts-ignore
       ports: editData.ports.split(',').map(p => p.trim()).filter(Boolean),
     });
     setIsEditing(false);

@@ -5,7 +5,7 @@ import readline from 'readline';
 import { AppConfig, AppStats } from '@/types';
 import { formatUptime, parseEnvFile, stripAnsi } from '@/lib/utils';
 
-const CONFIG_PATH = path.join(process.cwd(), 'apps.config.json');
+const CONFIG_PATH = path.join(/*turbopackIgnore: true*/ process.cwd(), 'apps.config.json');
 const MAX_LOG_LINES = 100;
 
 const BUILD_PATTERNS = /building\.\.\.|rebuilding\.\.\.|compiling|webpack is (watching|compiling)/i;
@@ -53,6 +53,20 @@ function saveConfig(): void {
   fs.renameSync(tempPath, CONFIG_PATH);
 }
 
+function killProcess(child: ChildProcess | null): void {
+  if (!child || child.killed) return;
+  const pid = child.pid;
+  if (process.platform === 'win32' && pid) {
+    exec(`taskkill /pid ${pid} /T /F`, (err) => {
+      if (err && !child.killed) {
+        try { child.kill('SIGKILL'); } catch { /* ignore */ }
+      }
+    });
+  } else {
+    try { child.kill('SIGTERM'); } catch { /* ignore */ }
+  }
+}
+
 function updateGitInfo(name: string): void {
   const state = S.processes.get(name);
   if (!state || !state.config.cwd) return;
@@ -77,11 +91,27 @@ function updateGitInfo(name: string): void {
   });
 }
 
-function updateResourceUsage(name: string): void {
-  const state = S.processes.get(name);
-  if (!state) return;
+function updateAllResourceUsage(): void {
+  const nodePids: { name: string; pid: number }[] = [];
+  const dockerApps: string[] = [];
 
-  if (state.config.type === 'docker') {
+  S.appsConfig.forEach(app => {
+    const state = S.processes.get(app.name);
+    if (!state) return;
+
+    if (state.config.type === 'docker') {
+      dockerApps.push(app.name);
+    } else if (state.child && !state.child.killed && state.child.pid) {
+      nodePids.push({ name: app.name, pid: state.child.pid });
+    } else {
+      state.resources = { cpu: '0%', ram: '0MB' };
+    }
+  });
+
+  // Query Docker stats for any containerized apps
+  dockerApps.forEach(name => {
+    const state = S.processes.get(name);
+    if (!state) return;
     const containerName = `dashboard-${name}`;
     const cmd = `docker stats ${containerName} --no-stream --format "{{.CPUPerc}},{{.MemUsage}}"`;
     exec(cmd, (err, stdout) => {
@@ -92,33 +122,54 @@ function updateResourceUsage(name: string): void {
       const [cpu, mem] = stdout.split(',');
       state.resources = { cpu: cpu?.trim() || '0%', ram: mem?.split(' / ')[0]?.trim() || '0MB' };
     });
-    return;
-  }
-
-  if (!state.child || state.child.killed || !state.child.pid) {
-    state.resources = { cpu: '0%', ram: '0MB' };
-    return;
-  }
-  const pid = state.child.pid;
-  const cmd = `powershell.exe -NoProfile -Command "Get-Process -Id ${pid} -ErrorAction SilentlyContinue | Select-Object WorkingSet64, @{Name='TotalProcessorTime';Expression={$_.UserProcessorTime.TotalMilliseconds + $_.PrivilegedProcessorTime.TotalMilliseconds}} | ConvertTo-Json"`;
-  exec(cmd, (err, stdout) => {
-    if (err || !stdout) return;
-    try {
-      const data = JSON.parse(stdout);
-      if (!data) return;
-      const ram = data.WorkingSet64 ? `${(parseInt(data.WorkingSet64) / 1024 / 1024).toFixed(1)}MB` : '0MB';
-      const totalTime = parseFloat(data.TotalProcessorTime || 0);
-      const now = Date.now();
-      if (state.lastUsage) {
-        const timeDiff = now - state.lastUsage.time;
-        const cpuDiff = totalTime - state.lastUsage.cpuTime;
-        state.resources = { cpu: `${((cpuDiff / timeDiff) * 100).toFixed(1)}%`, ram };
-      } else {
-        state.resources = { cpu: '...', ram };
-      }
-      state.lastUsage = { time: now, cpuTime: totalTime };
-    } catch { /* ignore */ }
   });
+
+  if (nodePids.length === 0) return;
+
+  if (process.platform === 'win32') {
+    // Single batched PowerShell query for all active Node PIDs
+    const pidsList = nodePids.map(p => p.pid).join(',');
+    const cmd = `powershell.exe -NoProfile -Command "@(Get-Process -Id ${pidsList} -ErrorAction SilentlyContinue | Select-Object Id, WorkingSet64, CPU) | ConvertTo-Json -Compress"`;
+    exec(cmd, (err, stdout) => {
+      if (err || !stdout) return;
+      try {
+        const parsed = JSON.parse(stdout);
+        const list: { Id?: number; WorkingSet64?: number; CPU?: number | null }[] = Array.isArray(parsed) ? parsed : [parsed];
+        const byPid = new Map<number, { WorkingSet64: number; CPU: number }>();
+        list.forEach(item => {
+          if (item?.Id) {
+            byPid.set(item.Id, { WorkingSet64: item.WorkingSet64 || 0, CPU: item.CPU ?? 0 });
+          }
+        });
+
+        const now = Date.now();
+        nodePids.forEach(({ name, pid }) => {
+          const state = S.processes.get(name);
+          if (!state) return;
+          const info = byPid.get(pid);
+          if (!info) {
+            state.resources = { cpu: '0%', ram: '0MB' };
+            return;
+          }
+
+          const ram = `${(info.WorkingSet64 / 1024 / 1024).toFixed(1)}MB`;
+          const totalCpuMs = (info.CPU || 0) * 1000;
+
+          if (state.lastUsage) {
+            const timeDiff = now - state.lastUsage.time;
+            const cpuDiff = totalCpuMs - state.lastUsage.cpuTime;
+            const cpuPercent = timeDiff > 0 ? Math.max(0, (cpuDiff / timeDiff) * 100) : 0;
+            state.resources = { cpu: `${cpuPercent.toFixed(1)}%`, ram };
+          } else {
+            state.resources = { cpu: '...', ram };
+          }
+          state.lastUsage = { time: now, cpuTime: totalCpuMs };
+        });
+      } catch {
+        // ignore parse error
+      }
+    });
+  }
 }
 
 function ensureState(config: AppConfig): ProcessState {
@@ -194,7 +245,7 @@ function startProcess(config: AppConfig): void {
 
       // 2. Run
       const envFilePath = path.join(config.cwd || process.cwd(), '.env');
-      const namedEnvPath = path.join(process.cwd(), `.env.${config.name}`);
+      const namedEnvPath = path.join(/*turbopackIgnore: true*/ process.cwd(), `.env.${config.name}`);
       const dotEnv = parseEnvFile(fs.existsSync(envFilePath) ? envFilePath : namedEnvPath);
       const combinedEnv = { ...dotEnv, ...(config.env ?? {}) };
 
@@ -227,7 +278,7 @@ function startProcess(config: AppConfig): void {
 
   // Node.js implementation
   const envFilePath = path.join(config.cwd || process.cwd(), '.env');
-  const namedEnvPath = path.join(process.cwd(), `.env.${config.name}`);
+  const namedEnvPath = path.join(/*turbopackIgnore: true*/ process.cwd(), `.env.${config.name}`);
   const dotEnv = parseEnvFile(
     fs.existsSync(envFilePath) ? envFilePath : namedEnvPath
   );
@@ -257,7 +308,7 @@ function handleExit(name: string, child: ChildProcess, signal: string | null): v
   if (!currentState || currentState.child !== child) return;
 
   const isManual = currentState.manualRestart;
-  const isExplicitKill = signal === 'SIGTERM' || signal === 'SIGKILL';
+  const isExplicitKill = signal === 'SIGTERM' || signal === 'SIGKILL' || !currentState.shouldRun;
   const isCrash = currentState.shouldRun && !isManual && !isExplicitKill;
 
   const now = Date.now();
@@ -285,7 +336,11 @@ function handleExit(name: string, child: ChildProcess, signal: string | null): v
   }
 
   if (currentState.shouldRun && (isManual || !isExplicitKill)) {
-    setTimeout(() => startProcess(currentState.config), isManual ? 500 : 1500);
+    // Exponential backoff: 1.5s, 3s, 6s... capped at 10s. 500ms on manual restart
+    const delay = isManual
+      ? 500
+      : Math.min(1500 * Math.pow(2, Math.max(0, crashTimes.length - 1)), 10000);
+    setTimeout(() => startProcess(currentState.config), delay);
   }
 }
 
@@ -310,18 +365,25 @@ export const orchestrator = {
       }
     });
 
+    // Batched resource metrics every 5 seconds
+    setInterval(() => {
+      updateAllResourceUsage();
+    }, 5000);
+
+    // Git info every 15 seconds
     setInterval(() => {
       S.appsConfig.forEach(app => {
         updateGitInfo(app.name);
-        updateResourceUsage(app.name);
       });
-    }, 5000);
+    }, 15000);
   },
 
   start(name: string): void {
     const state = S.processes.get(name);
     if (state) {
       state.shouldRun = true;
+      state.circuitOpen = false;
+      state.crashTimes = [];
       if (!state.child || state.child.killed) startProcess(state.config);
     }
   },
@@ -333,7 +395,7 @@ export const orchestrator = {
       if (state.config.type === 'docker') {
         exec(`docker stop dashboard-${name}`);
       } else {
-        state.child?.kill('SIGTERM');
+        killProcess(state.child);
       }
     }
   },
@@ -342,12 +404,14 @@ export const orchestrator = {
     const state = S.processes.get(name);
     if (state) {
       state.shouldRun = true;
+      state.circuitOpen = false;
+      state.crashTimes = [];
       if (state.config.type === 'docker') {
         state.manualRestart = true;
         exec(`docker stop dashboard-${name}`);
       } else if (state.child) {
         state.manualRestart = true;
-        state.child.kill('SIGTERM');
+        killProcess(state.child);
       } else {
         startProcess(state.config);
       }
@@ -373,7 +437,7 @@ export const orchestrator = {
       if (oldState) {
         const wasRunning = oldState.shouldRun;
         oldState.shouldRun = false;
-        oldState.child?.kill('SIGTERM');
+        killProcess(oldState.child);
         S.processes.set(patch.name!, {
           ...oldState,
           config: S.appsConfig[index],
