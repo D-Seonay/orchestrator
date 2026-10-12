@@ -154,7 +154,7 @@ export default function AddProjectModal({ isOpen, onClose, onAdd }: Props) {
 
             {/* Name */}
             <div>
-              <label className="text-zinc-500 text-xs uppercase tracking-widest block mb-1">PROJECT_NAME</label>
+              <label className="text-zinc-400 text-xs uppercase tracking-widest block mb-1">PROJECT_NAME</label>
               <input
                 type="text" required disabled={isSubmitting}
                 placeholder="ex: AUTH-SERVICE"
@@ -167,7 +167,7 @@ export default function AddProjectModal({ isOpen, onClose, onAdd }: Props) {
             {/* CWD with live validation */}
             <div>
               <div className="flex items-center justify-between mb-1">
-                <label className="text-zinc-500 text-xs uppercase tracking-widest">WORKING_DIR</label>
+                <label className="text-zinc-400 text-xs uppercase tracking-widest">WORKING_DIR</label>
                 <ValidationIndicator state={cwdValidation} />
               </div>
               <input
@@ -186,7 +186,7 @@ export default function AddProjectModal({ isOpen, onClose, onAdd }: Props) {
             {/* Script / Dockerfile with live validation */}
             <div>
               <div className="flex items-center justify-between mb-1">
-                <label className="text-zinc-500 text-xs uppercase tracking-widest">
+                <label className="text-zinc-400 text-xs uppercase tracking-widest">
                   {formData.type === 'node' ? 'LAUNCH_SCRIPT' : 'DOCKERFILE'}
                 </label>
                 <ValidationIndicator state={formData.script ? scriptValidation : 'idle'} />
@@ -207,7 +207,7 @@ export default function AddProjectModal({ isOpen, onClose, onAdd }: Props) {
             {/* Args / Ports */}
             {formData.type === 'node' ? (
               <div>
-                <label className="text-zinc-500 text-xs uppercase tracking-widest block mb-1">ARGUMENTS</label>
+                <label className="text-zinc-400 text-xs uppercase tracking-widest block mb-1">ARGUMENTS</label>
                 <input
                   type="text" disabled={isSubmitting}
                   placeholder="ex: --port 3000"
@@ -218,7 +218,7 @@ export default function AddProjectModal({ isOpen, onClose, onAdd }: Props) {
               </div>
             ) : (
               <div>
-                <label className="text-zinc-500 text-xs uppercase tracking-widest block mb-1">PORT_MAPPINGS</label>
+                <label className="text-zinc-400 text-xs uppercase tracking-widest block mb-1">PORT_MAPPINGS</label>
                 <input
                   type="text" disabled={isSubmitting}
                   placeholder="ex: 8080:80, 3000:3000"
@@ -231,7 +231,7 @@ export default function AddProjectModal({ isOpen, onClose, onAdd }: Props) {
 
             {/* Language Selection (Optional) */}
             <div>
-              <label className="text-zinc-500 text-xs uppercase tracking-widest block mb-1">DATABASE_LANGUAGE (OPTIONAL)</label>
+              <label className="text-zinc-400 text-xs uppercase tracking-widest block mb-1">DATABASE_LANGUAGE (OPTIONAL)</label>
               <div className="flex gap-2">
                 {[
                   { label: 'FRANÇAIS', value: 'fr' as const },
