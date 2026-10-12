@@ -2,17 +2,22 @@
 
 import { motion } from 'framer-motion';
 import type { AppStats } from '@/types';
-import LogModal from '@/components/LogModal';
 import { useState } from 'react';
 import { isErrorLog } from '@/lib/utils';
+
+type ActionType = 'start' | 'stop' | 'restart' | 'gitpull';
 
 interface Props {
   project: AppStats;
   focused: boolean;
-  onAction: (action: 'start' | 'stop' | 'restart' | 'gitpull') => void;
+  onAction: (action: ActionType) => void | Promise<void>;
   onDelete: () => void;
   onFocus: () => void;
+  onOpenLogs: () => void;
 }
+
+const ROW_BTN =
+  'inline-flex items-center justify-center h-7 min-w-7 px-1.5 text-xs border transition-colors disabled:opacity-40 disabled:cursor-wait';
 
 function statusColor(status: string) {
   switch (status) {
@@ -24,9 +29,19 @@ function statusColor(status: string) {
   }
 }
 
-export default function ProjectRow({ project, focused, onAction, onDelete, onFocus }: Props) {
-  const [isLogsOpen, setIsLogsOpen] = useState(false);
+export default function ProjectRow({ project, focused, onAction, onDelete, onFocus, onOpenLogs }: Props) {
+  const [busy, setBusy] = useState<ActionType | null>(null);
   const errorCount = project.logs.filter(isErrorLog).length;
+
+  const runAction = async (action: ActionType) => {
+    onFocus();
+    setBusy(action);
+    try {
+      await onAction(action);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   return (
     <>
@@ -36,7 +51,7 @@ export default function ProjectRow({ project, focused, onAction, onDelete, onFoc
         animate={{ opacity: 1, x: 0 }}
         exit={{ opacity: 0, x: -10 }}
         onClick={onFocus}
-        className={`flex items-center gap-3 px-3 py-2 border-b border-zinc-900 hover:bg-zinc-900/50 transition-colors cursor-default ${
+        className={`flex items-center gap-3 px-3 py-2 border-b border-zinc-800 hover:bg-zinc-900/50 transition-colors cursor-default min-w-[800px] ${
           focused ? 'bg-zinc-900/70 border-l-2 border-l-zinc-500' : 'border-l-2 border-l-transparent'
         }`}
       >
@@ -45,7 +60,7 @@ export default function ProjectRow({ project, focused, onAction, onDelete, onFoc
 
         {/* Name */}
         <div className="flex items-center gap-2 w-44 shrink-0 overflow-hidden">
-          <span className="text-[9px] px-1 border border-zinc-800 text-zinc-600 uppercase shrink-0">
+          <span className="text-[10px] px-1 border border-zinc-700 text-zinc-400 uppercase shrink-0">
             {project.type === 'docker' ? 'DOCK' : 'NODE'}
           </span>
           <span className="text-xs font-bold uppercase tracking-wider truncate">
@@ -59,14 +74,14 @@ export default function ProjectRow({ project, focused, onAction, onDelete, onFoc
         </span>
 
         {/* Uptime */}
-        <span className="text-zinc-600 text-xs w-24 shrink-0">
+        <span className="text-zinc-400 text-xs w-24 shrink-0">
           {project.uptime}
         </span>
 
         {/* CPU / RAM */}
         <span className="text-xs w-28 shrink-0">
           <span className="text-blue-400">{project.cpu}</span>
-          <span className="text-zinc-700"> / </span>
+          <span className="text-zinc-500"> / </span>
           <span className="text-purple-400">{project.ram}</span>
         </span>
 
@@ -76,7 +91,7 @@ export default function ProjectRow({ project, focused, onAction, onDelete, onFoc
         </span>
 
         {/* Restarts */}
-        <span className="text-zinc-600 text-xs w-8 text-right shrink-0">
+        <span className="text-zinc-400 text-xs w-8 text-right shrink-0">
           {project.restarts > 0 ? `↺${project.restarts}` : ''}
         </span>
 
@@ -87,30 +102,32 @@ export default function ProjectRow({ project, focused, onAction, onDelete, onFoc
         <div className="flex gap-1 shrink-0">
           {project.status === 'Crashed' ? (
             <button
-              onClick={e => { e.stopPropagation(); onAction('restart'); }}
-              className="text-xs border border-red-800 px-2 py-0.5 text-red-400 hover:border-red-400 transition-colors uppercase"
+              onClick={e => { e.stopPropagation(); runAction('restart'); }}
+              disabled={busy === 'restart'}
+              className={`${ROW_BTN} border-red-800 px-2 text-red-400 hover:border-red-400 uppercase`}
+              aria-label={`Réinitialiser et redémarrer ${project.name}`}
             >
               ⚡ RESET
             </button>
           ) : (
             <>
-              <button onClick={e => { e.stopPropagation(); onAction('start'); }}   className="text-xs border border-zinc-800 px-1.5 py-0.5 hover:border-green-400 hover:text-green-400 transition-colors text-zinc-600" title="Start">▶</button>
-              <button onClick={e => { e.stopPropagation(); onAction('stop'); }}    className="text-xs border border-zinc-800 px-1.5 py-0.5 hover:border-red-400 hover:text-red-400 transition-colors text-zinc-600" title="Stop">■</button>
-              <button onClick={e => { e.stopPropagation(); onAction('restart'); }} className="text-xs border border-zinc-800 px-1.5 py-0.5 hover:border-yellow-400 hover:text-yellow-400 transition-colors text-zinc-600" title="Restart">↺</button>
+              <button onClick={e => { e.stopPropagation(); runAction('start'); }}   disabled={busy === 'start'}   className={`${ROW_BTN} border-zinc-700 text-zinc-300 hover:border-green-400 hover:text-green-400`} aria-label={`Démarrer ${project.name}`} title="Start">▶</button>
+              <button onClick={e => { e.stopPropagation(); runAction('stop'); }}    disabled={busy === 'stop'}    className={`${ROW_BTN} border-zinc-700 text-zinc-300 hover:border-red-400 hover:text-red-400`} aria-label={`Arrêter ${project.name}`} title="Stop">■</button>
+              <button onClick={e => { e.stopPropagation(); runAction('restart'); }} disabled={busy === 'restart'} className={`${ROW_BTN} border-zinc-700 text-zinc-300 hover:border-yellow-400 hover:text-yellow-400`} aria-label={`Redémarrer ${project.name}`} title="Restart">↺</button>
             </>
           )}
           <button
-            onClick={e => { e.stopPropagation(); setIsLogsOpen(true); }}
-            className={`text-xs border border-zinc-800 px-1.5 py-0.5 transition-colors ${errorCount > 0 ? 'text-red-500 hover:border-red-400' : 'text-zinc-600 hover:border-zinc-500'}`}
+            onClick={e => { e.stopPropagation(); onFocus(); onOpenLogs(); }}
+            className={`${ROW_BTN} ${errorCount > 0 ? 'border-red-800 text-red-400 hover:border-red-400' : 'border-zinc-700 text-zinc-300 hover:border-zinc-400 hover:text-white'}`}
+            aria-label={`Voir les logs de ${project.name}${errorCount > 0 ? ` (${errorCount} erreurs)` : ''}`}
             title="Logs"
           >
             ≡{errorCount > 0 ? `⚠${errorCount}` : ''}
           </button>
-          <button onClick={e => { e.stopPropagation(); onDelete(); }} className="text-xs border border-zinc-800 px-1.5 py-0.5 hover:border-red-600 hover:text-red-600 transition-colors text-zinc-700" title="Delete">✕</button>
+          <span className="w-px self-stretch bg-zinc-800 mx-0.5" aria-hidden />
+          <button onClick={e => { e.stopPropagation(); onDelete(); }} className={`${ROW_BTN} border-zinc-700 text-zinc-400 hover:border-red-600 hover:text-red-500`} aria-label={`Supprimer ${project.name}`} title="Delete">✕</button>
         </div>
       </motion.div>
-
-      <LogModal appName={project.name} logs={project.logs} isOpen={isLogsOpen} onClose={() => setIsLogsOpen(false)} />
     </>
   );
 }

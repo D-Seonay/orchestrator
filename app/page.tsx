@@ -7,6 +7,7 @@ import ProjectRow from '@/components/ProjectRow';
 import AddProjectModal from '@/components/AddProjectModal';
 import DeleteProjectModal from '@/components/DeleteProjectModal';
 import GroupBar from '@/components/GroupBar';
+import LogModal from '@/components/LogModal';
 import type { AppStats, OrchestratorStatus } from '@/types';
 import { isErrorLog } from '@/lib/utils';
 
@@ -35,14 +36,30 @@ export default function DashboardPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [search, setSearch] = useState('');
   const [focusedIndex, setFocusedIndex] = useState(0);
+  const [logsFor, setLogsFor] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ msg: string; type: 'error' | 'info' } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const prevRestarts = useRef(new Map<string, number>());
   const prevStatuses = useRef(new Map<string, string>());
 
-  useEffect(() => {
-    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission();
+  const showToast = useCallback((msg: string, type: 'error' | 'info' = 'error') => {
+    setToast({ msg, type });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 4000);
+  }, []);
+
+  // Request notification permission lazily — only the first time a crash fires,
+  // never unprompted on page load.
+  const notifyCrash = useCallback((name: string, restarts: number) => {
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+    const show = () => new Notification(`⚠️ ${name} a crashé`, {
+      body: `Tentative de redémarrage... (restart #${restarts})`,
+    });
+    if (Notification.permission === 'granted') show();
+    else if (Notification.permission === 'default') {
+      Notification.requestPermission().then(p => { if (p === 'granted') show(); });
     }
   }, []);
 
@@ -55,11 +72,7 @@ export default function DashboardPage() {
         const prevR = prevRestarts.current.get(app.name) ?? app.restarts;
         const wasRunning = prevStatus === 'Online' || prevStatus === 'Building';
         if (wasRunning && app.restarts > prevR && app.shouldRun) {
-          if (Notification.permission === 'granted') {
-            new Notification(`⚠️ ${app.name} a crashé`, {
-              body: `Tentative de redémarrage... (restart #${app.restarts})`,
-            });
-          }
+          notifyCrash(app.name, app.restarts);
         }
         prevStatuses.current.set(app.name, app.status);
         prevRestarts.current.set(app.name, app.restarts);
@@ -69,7 +82,7 @@ export default function DashboardPage() {
       setIsLoaded(true);
     };
     return () => es.close();
-  }, []);
+  }, [notifyCrash]);
 
   // Filtered + searched apps
   const filteredApps = apps.filter(app => {
@@ -85,13 +98,20 @@ export default function DashboardPage() {
 
   // Keyboard shortcuts
   const handleAction = useCallback(async (name: string, action: 'start' | 'stop' | 'restart' | 'gitpull') => {
-    const res = await fetch(`/api/apps/${encodeURIComponent(name)}/action`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action }),
-    });
-    if (!res.ok) console.error(`Action ${action} failed for ${name}`);
-  }, []);
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(name)}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(`${action.toUpperCase()} // ${name} : ${data.error || `HTTP ${res.status}`}`);
+      }
+    } catch {
+      showToast(`${action.toUpperCase()} // ${name} : réseau indisponible`);
+    }
+  }, [showToast]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -105,7 +125,7 @@ export default function DashboardPage() {
       switch (e.key) {
         case 'r': case 'R': e.preventDefault(); handleAction(focused.name, 'restart'); break;
         case 's': case 'S': e.preventDefault(); handleAction(focused.name, 'stop'); break;
-        case 'l': case 'L': e.preventDefault(); break; // LogModal handled via ProjectCard/Row
+        case 'l': case 'L': e.preventDefault(); setLogsFor(focused.name); break;
         case '/':
           e.preventDefault();
           searchRef.current?.focus();
@@ -129,23 +149,41 @@ export default function DashboardPage() {
   }, [filteredApps, focusedIndex, handleAction]);
 
   const handleGroupAction = async (group: string, action: 'start' | 'stop' | 'restart') => {
-    await fetch(`/api/groups/${encodeURIComponent(group)}/action`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action }),
-    });
+    try {
+      const res = await fetch(`/api/groups/${encodeURIComponent(group)}/action`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      if (!res.ok) showToast(`${action.toUpperCase()} // groupe ${group} a échoué`);
+    } catch {
+      showToast(`${action.toUpperCase()} // groupe ${group} : réseau indisponible`);
+    }
   };
 
   const handleUpdate = async (name: string, patch: Record<string, unknown>) => {
-    const res = await fetch(`/api/apps/${encodeURIComponent(name)}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(patch),
-    });
-    if (!res.ok) console.error(`Update failed for ${name}`);
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(name)}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(`UPDATE // ${name} : ${data.error || `HTTP ${res.status}`}`);
+      }
+    } catch {
+      showToast(`UPDATE // ${name} : réseau indisponible`);
+    }
   };
 
   const handleDelete = async (name: string) => {
-    await fetch(`/api/apps/${encodeURIComponent(name)}`, { method: 'DELETE' });
-    setProjectToDelete(null);
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      if (!res.ok) showToast(`DELETE // ${name} a échoué`);
+    } catch {
+      showToast(`DELETE // ${name} : réseau indisponible`);
+    } finally {
+      setProjectToDelete(null);
+    }
   };
 
   const handleAdd = async (data: {
@@ -205,7 +243,7 @@ export default function DashboardPage() {
           >
             ORCHESTRATOR<br />PRO_DASHBOARD
           </motion.h1>
-          {masterUptime && <span className="text-zinc-500 text-xs mt-1 block">UPTIME // {masterUptime}</span>}
+          {masterUptime && <span className="text-zinc-400 text-xs mt-1 block">UPTIME // {masterUptime}</span>}
         </div>
         <motion.button
           onClick={() => setIsModalOpen(true)}
@@ -230,8 +268,8 @@ export default function DashboardPage() {
               className={`text-xs px-3 py-1 border transition-colors uppercase tracking-widest ${
                 active
                   ? isError && count > 0 ? 'border-red-600 text-red-400 bg-red-950/20' : 'border-zinc-400 text-white'
-                  : isError && count > 0 ? 'border-zinc-800 text-red-500 hover:border-red-600'
-                  : 'border-zinc-800 text-zinc-600 hover:border-zinc-600 hover:text-zinc-400'
+                  : isError && count > 0 ? 'border-zinc-700 text-red-500 hover:border-red-600'
+                  : 'border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'
               }`}
             >
               {label}{count > 0 && count < counts.all ? ` (${count})` : ''}
@@ -240,8 +278,8 @@ export default function DashboardPage() {
         })}
 
         {/* Search */}
-        <div className="flex items-center border border-zinc-800 focus-within:border-zinc-500 transition-colors ml-2">
-          <span className="text-zinc-600 text-xs px-2">/</span>
+        <div className="flex items-center border border-zinc-700 focus-within:border-zinc-500 transition-colors ml-2">
+          <span className="text-zinc-400 text-xs px-2">/</span>
           <input
             ref={searchRef}
             type="text"
@@ -257,17 +295,21 @@ export default function DashboardPage() {
         </div>
 
         {/* View toggle */}
-        <div className="flex border border-zinc-800 ml-auto">
+        <div className="flex border border-zinc-700 ml-auto">
           <button
             onClick={() => setViewMode('grid')}
-            className={`text-xs px-3 py-1 transition-colors ${viewMode === 'grid' ? 'text-white bg-zinc-800' : 'text-zinc-600 hover:text-zinc-400'}`}
+            className={`text-xs px-3 py-1 transition-colors ${viewMode === 'grid' ? 'text-white bg-zinc-800' : 'text-zinc-400 hover:text-zinc-200'}`}
+            aria-label="Vue grille"
+            aria-pressed={viewMode === 'grid'}
             title="Grid view"
           >
             ⊞
           </button>
           <button
             onClick={() => setViewMode('list')}
-            className={`text-xs px-3 py-1 transition-colors ${viewMode === 'list' ? 'text-white bg-zinc-800' : 'text-zinc-600 hover:text-zinc-400'}`}
+            className={`text-xs px-3 py-1 transition-colors ${viewMode === 'list' ? 'text-white bg-zinc-800' : 'text-zinc-400 hover:text-zinc-200'}`}
+            aria-label="Vue liste"
+            aria-pressed={viewMode === 'list'}
             title="List view"
           >
             ≡
@@ -276,27 +318,26 @@ export default function DashboardPage() {
       </div>
 
       {/* Keyboard shortcuts hint */}
-      <div className="text-zinc-800 text-xs mb-4 hidden md:block">
+      <div className="text-zinc-500 text-xs mb-4 hidden md:block">
         ↑↓ navigate · R restart · S stop · L logs · / search · Esc clear
       </div>
 
-      {/* List view header */}
-      {viewMode === 'list' && filteredApps.length > 0 && (
-        <div className="flex items-center gap-3 px-3 py-1 border-b border-zinc-800 mb-1">
-          <span className="text-zinc-700 text-xs w-4 shrink-0" />
-          <span className="text-zinc-700 text-xs w-44 shrink-0 uppercase tracking-widest">Name</span>
-          <span className="text-zinc-700 text-xs w-20 shrink-0 uppercase tracking-widest">Status</span>
-          <span className="text-zinc-700 text-xs w-24 shrink-0 uppercase tracking-widest">Uptime</span>
-          <span className="text-zinc-700 text-xs w-28 shrink-0 uppercase tracking-widest">CPU / RAM</span>
-          <span className="text-zinc-700 text-xs w-24 shrink-0 uppercase tracking-widest">Branch</span>
-          <span className="text-zinc-700 text-xs w-8 shrink-0" />
-          <div className="flex-1" />
-          <span className="text-zinc-700 text-xs uppercase tracking-widest">Actions</span>
-        </div>
-      )}
-
       {/* Groups + cards/rows */}
-      <div className="flex flex-col gap-0">
+      <div className={`flex flex-col gap-0 ${viewMode === 'list' ? 'overflow-x-auto' : ''}`}>
+        {/* List view header */}
+        {viewMode === 'list' && filteredApps.length > 0 && (
+          <div className="flex items-center gap-3 px-3 py-1 border-b border-zinc-700 mb-1 min-w-[800px]">
+            <span className="text-zinc-500 text-xs w-4 shrink-0" />
+            <span className="text-zinc-500 text-xs w-44 shrink-0 uppercase tracking-widest">Name</span>
+            <span className="text-zinc-500 text-xs w-20 shrink-0 uppercase tracking-widest">Status</span>
+            <span className="text-zinc-500 text-xs w-24 shrink-0 uppercase tracking-widest">Uptime</span>
+            <span className="text-zinc-500 text-xs w-28 shrink-0 uppercase tracking-widest">CPU / RAM</span>
+            <span className="text-zinc-500 text-xs w-24 shrink-0 uppercase tracking-widest">Branch</span>
+            <span className="text-zinc-500 text-xs w-8 shrink-0" />
+            <div className="flex-1" />
+            <span className="text-zinc-500 text-xs uppercase tracking-widest">Actions</span>
+          </div>
+        )}
         <AnimatePresence mode="popLayout">
           {sortedGroups.map(([groupName, groupApps]) => (
             <motion.div key={groupName || '__ungrouped'} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
@@ -304,16 +345,16 @@ export default function DashboardPage() {
                 <GroupBar name={groupName} apps={groupApps} onAction={action => handleGroupAction(groupName, action)} />
               )}
               {groupName && viewMode === 'list' && (
-                <div className="flex items-center gap-2 px-3 py-1 mt-4 mb-1">
-                  <span className="text-zinc-600 text-xs uppercase tracking-widest">{groupName}</span>
-                  <div className="flex-1 border-t border-zinc-900" />
-                  <button onClick={() => handleGroupAction(groupName, 'restart')} className="text-zinc-700 hover:text-yellow-400 text-xs transition-colors" title={`Restart all ${groupName}`}>↺</button>
-                  <button onClick={() => handleGroupAction(groupName, 'stop')}    className="text-zinc-700 hover:text-red-400 text-xs transition-colors"    title={`Stop all ${groupName}`}>■</button>
+                <div className="flex items-center gap-2 px-3 py-1 mt-4 mb-1 min-w-[800px]">
+                  <span className="text-zinc-300 text-xs uppercase tracking-widest">{groupName}</span>
+                  <div className="flex-1 border-t border-zinc-800" />
+                  <button onClick={() => handleGroupAction(groupName, 'restart')} className="inline-flex items-center justify-center h-7 min-w-7 text-zinc-400 hover:text-yellow-400 text-xs transition-colors" aria-label={`Redémarrer tout le groupe ${groupName}`} title={`Restart all ${groupName}`}>↺</button>
+                  <button onClick={() => handleGroupAction(groupName, 'stop')}    className="inline-flex items-center justify-center h-7 min-w-7 text-zinc-400 hover:text-red-400 text-xs transition-colors"    aria-label={`Arrêter tout le groupe ${groupName}`} title={`Stop all ${groupName}`}>■</button>
                 </div>
               )}
               {!groupName && sortedGroups.length > 1 && viewMode === 'grid' && (
                 <div className="flex items-center gap-3 mb-3 mt-6">
-                  <span className="text-zinc-700 text-xs uppercase tracking-widest">Other</span>
+                  <span className="text-zinc-400 text-xs uppercase tracking-widest">Other</span>
                   <div className="flex-1 border-t border-zinc-800" />
                 </div>
               )}
@@ -322,14 +363,17 @@ export default function DashboardPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mb-2">
                   <AnimatePresence mode="popLayout">
                     {groupApps.map(app => {
-                      globalIdx++;
+                      const idx = globalIdx++;
                       return (
                         <ProjectCard
                           key={app.name}
                           project={app}
+                          focused={focusedIndex === idx}
+                          onFocus={() => setFocusedIndex(idx)}
                           onAction={action => handleAction(app.name, action)}
                           onUpdate={patch => handleUpdate(app.name, patch)}
                           onDelete={() => setProjectToDelete(app.name)}
+                          onOpenLogs={() => setLogsFor(app.name)}
                         />
                       );
                     })}
@@ -347,6 +391,7 @@ export default function DashboardPage() {
                         onFocus={() => setFocusedIndex(idx)}
                         onAction={action => handleAction(app.name, action)}
                         onDelete={() => setProjectToDelete(app.name)}
+                        onOpenLogs={() => setLogsFor(app.name)}
                       />
                     );
                   })}
@@ -357,19 +402,46 @@ export default function DashboardPage() {
         </AnimatePresence>
 
         {isLoaded && filteredApps.length === 0 && (
-          <p className="text-zinc-600 uppercase tracking-widest text-xs">
+          <p className="text-zinc-400 uppercase tracking-widest text-xs">
             {search ? `NO RESULTS FOR "${search}".` : statusFilter === 'all' ? 'NO PROJECTS FOUND. CLICK + DEPLOY TO START.' : `NO ${statusFilter.toUpperCase()} PROJECTS.`}
           </p>
         )}
       </div>
 
       <AddProjectModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onAdd={handleAdd} />
-      <DeleteProjectModal 
-        isOpen={!!projectToDelete} 
-        onClose={() => setProjectToDelete(null)} 
-        onConfirm={() => projectToDelete && handleDelete(projectToDelete)} 
-        projectName={projectToDelete || ''} 
+      <DeleteProjectModal
+        isOpen={!!projectToDelete}
+        onClose={() => setProjectToDelete(null)}
+        onConfirm={() => projectToDelete && handleDelete(projectToDelete)}
+        projectName={projectToDelete || ''}
       />
+      <LogModal
+        appName={logsFor || ''}
+        logs={apps.find(a => a.name === logsFor)?.logs ?? []}
+        isOpen={!!logsFor}
+        onClose={() => setLogsFor(null)}
+      />
+
+      {/* Action feedback toast */}
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            key="toast"
+            role="status"
+            aria-live="polite"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className={`fixed bottom-4 left-1/2 -translate-x-1/2 z-[80] max-w-[90vw] border px-4 py-2 text-xs uppercase tracking-wider font-mono ${
+              toast.type === 'error'
+                ? 'border-red-800 bg-red-950/40 text-red-300'
+                : 'border-zinc-700 bg-zinc-900 text-zinc-200'
+            }`}
+          >
+            {toast.type === 'error' ? 'ERR // ' : ''}{toast.msg}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -99,7 +99,7 @@ export default function EnvFileModal({ appName, isOpen, onClose }: Props) {
             <div className="flex items-start justify-between">
               <div>
                 <h2 className="text-sm font-bold uppercase tracking-widest">ENV_FILE</h2>
-                <p className="text-zinc-600 text-xs mt-0.5 truncate max-w-[340px]">{filePath || '...'}</p>
+                <p className="text-zinc-400 text-xs mt-0.5 truncate max-w-[340px]">{filePath || '...'}</p>
               </div>
               <button
                 className="text-zinc-400 hover:text-white transition-colors text-lg leading-none ml-4"
@@ -129,7 +129,7 @@ export default function EnvFileModal({ appName, isOpen, onClose }: Props) {
               <span className="text-xs">
                 {status === 'saved' && <span className="text-green-400">SAVED — app restarted</span>}
                 {status === 'error' && <span className="text-red-400">ERROR // {errorMsg || 'save failed'}</span>}
-                {status === 'idle' && <span className="text-zinc-600">Changes trigger auto-restart</span>}
+                {status === 'idle' && <span className="text-zinc-400">Changes trigger auto-restart</span>}
               </span>
               <div className="flex gap-2">
                 <button

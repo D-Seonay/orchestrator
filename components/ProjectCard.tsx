@@ -4,12 +4,15 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import type { AppStats } from '@/types';
 import EnvFileModal from '@/components/EnvFileModal';
-import LogModal from '@/components/LogModal';
 import { isErrorLog } from '@/lib/utils';
+
+type ActionType = 'start' | 'stop' | 'restart' | 'gitpull';
 
 interface Props {
   project: AppStats;
-  onAction: (action: 'start' | 'stop' | 'restart' | 'gitpull') => void;
+  focused?: boolean;
+  onFocus?: () => void;
+  onAction: (action: ActionType) => void | Promise<void>;
   onUpdate: (patch: {
     script?: string;
     args?: string[];
@@ -18,12 +21,26 @@ interface Props {
     ports?: string[];
   }) => void;
   onDelete: () => void;
+  onOpenLogs: () => void;
 }
 
-export default function ProjectCard({ project, onAction, onUpdate, onDelete }: Props) {
+const ACTION_BTN =
+  'inline-flex items-center justify-center h-8 min-w-8 px-2 text-xs border transition-colors disabled:opacity-40 disabled:cursor-wait';
+
+export default function ProjectCard({ project, focused, onFocus, onAction, onUpdate, onDelete, onOpenLogs }: Props) {
   const [isEditing, setIsEditing] = useState(false);
   const [isEnvOpen, setIsEnvOpen] = useState(false);
-  const [isLogsOpen, setIsLogsOpen] = useState(false);
+  const [busy, setBusy] = useState<ActionType | null>(null);
+
+  const runAction = async (action: ActionType) => {
+    onFocus?.();
+    setBusy(action);
+    try {
+      await onAction(action);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const [editData, setEditData] = useState({
     script: project.script || '',
@@ -91,7 +108,9 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.95 }}
       transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
-      className="border border-zinc-800 hover:border-zinc-600 transition-colors p-4 flex flex-col gap-3 bg-zinc-950"
+      className={`border transition-colors p-4 flex flex-col gap-3 bg-zinc-950 ${
+        focused ? 'border-zinc-500 ring-1 ring-zinc-500' : 'border-zinc-800 hover:border-zinc-600'
+      }`}
     >
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -256,13 +275,13 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
           </div>
         ) : (
           <>
-            <div className="flex justify-between text-xs text-zinc-500 hover:text-zinc-400">
+            <div className="flex justify-between text-xs text-zinc-400 hover:text-zinc-300">
               <span className="truncate max-w-[70%]">{project.script}</span>
-              <span className="text-zinc-600">click to edit</span>
+              <span className="text-zinc-500">click to edit</span>
             </div>
 
             {project.cwd && (
-              <div className="text-[10px] text-zinc-600 truncate font-mono" title={project.cwd}>
+              <div className="text-[10px] text-zinc-500 truncate font-mono" title={project.cwd}>
                 {project.cwd}
               </div>
             )}
@@ -270,8 +289,8 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
             {/* Language preset badge */}
             {project.env?.OPTION && (
               <div className="flex items-center gap-1.5 mt-0.5">
-                <span className="text-[9px] text-zinc-600 uppercase tracking-widest">LANG:</span>
-                <span className="text-[9px] px-1 py-0.2 border border-zinc-800 text-zinc-400 font-mono">
+                <span className="text-[10px] text-zinc-400 uppercase tracking-widest">LANG:</span>
+                <span className="text-[10px] px-1 py-0.2 border border-zinc-700 text-zinc-300 font-mono">
                   {project.env.OPTION === '1' ? 'FR' : project.env.OPTION === '2' ? 'EN' : project.env.OPTION === '3' ? 'ES' : `OPT ${project.env.OPTION}`}
                 </span>
               </div>
@@ -279,7 +298,7 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
 
             {/* Extra env vars badge */}
             {envCount > 0 && (
-              <div className="text-[9px] text-zinc-600">
+              <div className="text-[10px] text-zinc-400">
                 {envCount} ENV VAR{envCount > 1 ? 'S' : ''}
               </div>
             )}
@@ -288,28 +307,28 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
       </div>
 
       {/* Metrics */}
-      <div className="grid grid-cols-2 gap-2 border-t border-zinc-900 pt-2 text-xs">
+      <div className="grid grid-cols-2 gap-2 border-t border-zinc-800 pt-2 text-xs">
         <div>
-          <span className="text-zinc-600 block text-[10px] uppercase tracking-wider">CPU</span>
-          <span className="font-bold text-zinc-300">{project.cpu}</span>
+          <span className="text-zinc-400 block text-[10px] uppercase tracking-wider">CPU</span>
+          <span className="font-bold text-zinc-100">{project.cpu}</span>
         </div>
         <div>
-          <span className="text-zinc-600 block text-[10px] uppercase tracking-wider">RAM</span>
-          <span className="font-bold text-zinc-300">{project.ram}</span>
+          <span className="text-zinc-400 block text-[10px] uppercase tracking-wider">RAM</span>
+          <span className="font-bold text-zinc-100">{project.ram}</span>
         </div>
       </div>
 
       {/* Git + Restarts */}
-      <div className="flex items-center justify-between text-xs text-zinc-500 border-t border-zinc-900 pt-2">
+      <div className="flex items-center justify-between text-xs text-zinc-400 border-t border-zinc-800 pt-2">
         <div className="flex items-center gap-1 text-[11px] truncate max-w-[65%]">
-          <span className="text-zinc-600">⎇</span>
+          <span className="text-zinc-400">⎇</span>
           <span className="truncate">{project.git.branch}</span>
           {project.git.dirty && <span className="text-yellow-500 font-bold" title="Uncommitted changes">*</span>}
           {project.git.sync && (
-            <span className="text-zinc-500 text-[10px] font-mono ml-0.5">{project.git.sync}</span>
+            <span className="text-zinc-400 text-[10px] font-mono ml-0.5">{project.git.sync}</span>
           )}
         </div>
-        <span className="text-zinc-600 text-[11px] shrink-0">↺ {project.restarts}</span>
+        <span className="text-zinc-400 text-[11px] shrink-0">↺ {project.restarts}</span>
       </div>
 
       {/* Circuit breaker alert banner */}
@@ -326,24 +345,27 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
       )}
 
       {/* Footer */}
-      <div className="flex items-center justify-between">
-        <span className="text-zinc-600 text-xs">UPTIME // {project.uptime}</span>
-        <div className="flex gap-1">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <span className="text-zinc-400 text-xs">UPTIME // {project.uptime}</span>
+        <div className="flex gap-1.5 flex-wrap justify-end">
           <button
-            onClick={() => setIsLogsOpen(true)}
-            className={`text-xs border px-2 py-1 transition-colors ${
+            onClick={() => { onFocus?.(); onOpenLogs(); }}
+            className={`${ACTION_BTN} ${
               errorCount > 0
-                ? 'border-zinc-800 text-red-500 hover:border-red-400'
-                : 'border-zinc-800 text-zinc-600 hover:border-zinc-400 hover:text-zinc-300'
+                ? 'border-red-800 text-red-400 hover:border-red-400'
+                : 'border-zinc-700 text-zinc-300 hover:border-zinc-400 hover:text-white'
             }`}
+            aria-label={`Voir les logs de ${project.name}${errorCount > 0 ? ` (${errorCount} erreurs)` : ''}`}
             title="Voir les logs"
           >
             LOGS{errorCount > 0 ? ` ⚠${errorCount}` : ''}
           </button>
           {project.cwd && (
             <button
-              onClick={() => onAction('gitpull')}
-              className="text-xs border border-zinc-800 px-2 py-1 hover:border-blue-400 hover:text-blue-400 transition-colors text-zinc-600"
+              onClick={() => runAction('gitpull')}
+              disabled={busy === 'gitpull'}
+              className={`${ACTION_BTN} border-zinc-700 text-zinc-300 hover:border-blue-400 hover:text-blue-400`}
+              aria-label={`Git pull et redémarrer ${project.name}`}
               title="Git pull + restart"
             >
               ⬇ pull
@@ -351,15 +373,17 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
           )}
           <button
             onClick={() => setIsEnvOpen(true)}
-            className="text-xs border border-zinc-800 px-2 py-1 hover:border-zinc-400 hover:text-zinc-300 transition-colors text-zinc-600"
+            className={`${ACTION_BTN} border-zinc-700 text-zinc-300 hover:border-zinc-400 hover:text-white`}
+            aria-label={`Modifier le fichier .env de ${project.name}`}
             title="Edit .env file"
           >
             .env
           </button>
-          <button onClick={() => onAction('start')} className="text-xs border border-zinc-800 px-2 py-1 hover:border-green-400 hover:text-green-400 transition-colors" title="Start">▶</button>
-          <button onClick={() => onAction('stop')} className="text-xs border border-zinc-800 px-2 py-1 hover:border-red-400 hover:text-red-400 transition-colors" title="Stop">■</button>
-          <button onClick={() => onAction('restart')} className="text-xs border border-zinc-800 px-2 py-1 hover:border-yellow-400 hover:text-yellow-400 transition-colors" title="Restart">↺</button>
-          <button onClick={onDelete} className="text-xs border border-zinc-800 px-2 py-1 hover:border-red-600 hover:text-red-600 transition-colors" title="Delete">✕</button>
+          <button onClick={() => runAction('start')} disabled={busy === 'start'} className={`${ACTION_BTN} border-zinc-700 text-zinc-300 hover:border-green-400 hover:text-green-400`} aria-label={`Démarrer ${project.name}`} title="Start">▶</button>
+          <button onClick={() => runAction('stop')} disabled={busy === 'stop'} className={`${ACTION_BTN} border-zinc-700 text-zinc-300 hover:border-red-400 hover:text-red-400`} aria-label={`Arrêter ${project.name}`} title="Stop">■</button>
+          <button onClick={() => runAction('restart')} disabled={busy === 'restart'} className={`${ACTION_BTN} border-zinc-700 text-zinc-300 hover:border-yellow-400 hover:text-yellow-400`} aria-label={`Redémarrer ${project.name}`} title="Restart">↺</button>
+          <span className="w-px self-stretch bg-zinc-800 mx-0.5" aria-hidden />
+          <button onClick={onDelete} className={`${ACTION_BTN} border-zinc-700 text-zinc-400 hover:border-red-600 hover:text-red-500`} aria-label={`Supprimer ${project.name}`} title="Delete">✕</button>
         </div>
       </div>
 
@@ -367,12 +391,6 @@ export default function ProjectCard({ project, onAction, onUpdate, onDelete }: P
         appName={project.name}
         isOpen={isEnvOpen}
         onClose={() => setIsEnvOpen(false)}
-      />
-      <LogModal
-        appName={project.name}
-        logs={project.logs}
-        isOpen={isLogsOpen}
-        onClose={() => setIsLogsOpen(false)}
       />
     </motion.div>
   );
