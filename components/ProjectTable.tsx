@@ -31,6 +31,7 @@ export const ROW_GRID =
 const BTN =
   'inline-flex items-center justify-center h-7 min-w-7 px-1.5 text-xs border border-zinc-700 text-zinc-300 transition-colors disabled:opacity-30 disabled:cursor-not-allowed';
 const NO_LAUNCH = 'Aucune commande de lancement — configurer';
+const MISSING = "Dossier absent — seul l'arrêt est possible";
 
 function Badge({ className, children, title }: { className: string; children: React.ReactNode; title?: string }) {
   return (
@@ -89,6 +90,9 @@ function ProjectRow({
   const st = STATUS[status];
   const active = status === 'running' || status === 'restarting';
   const noLaunch = launch === null;
+  // Ni démarrage ni redémarrage pour un dossier absent : seul l'arrêt reste possible.
+  const cannotLaunch = noLaunch || project.missing;
+  const launchTitle = (label: string) => (project.missing ? MISSING : noLaunch ? NO_LAUNCH : label);
 
   return (
     <div className="border-b border-zinc-900">
@@ -157,10 +161,10 @@ function ProjectRow({
         <span className="text-zinc-400 tabular-nums">{status === 'running' ? formatUptime(project.uptimeMs / 1000) : ''}</span>
 
         <span className="flex items-center gap-1 justify-end">
-          <span title={noLaunch ? NO_LAUNCH : 'Démarrer'}>
+          <span title={launchTitle('Démarrer')}>
             <button
               onClick={() => onAction('start')}
-              disabled={noLaunch || active || busy}
+              disabled={cannotLaunch || active || busy}
               aria-label={`Démarrer ${name}`}
               className={`${BTN} enabled:hover:border-green-400 enabled:hover:text-green-400`}
             >
@@ -176,10 +180,10 @@ function ProjectRow({
           >
             ■
           </button>
-          <span title={noLaunch ? NO_LAUNCH : 'Redémarrer'}>
+          <span title={launchTitle('Redémarrer')}>
             <button
               onClick={() => onAction('restart')}
-              disabled={noLaunch || busy}
+              disabled={cannotLaunch || busy}
               aria-label={`Redémarrer ${name}`}
               className={`${BTN} enabled:hover:border-yellow-400 enabled:hover:text-yellow-400`}
             >

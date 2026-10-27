@@ -97,6 +97,22 @@ describe('ProcessManager', () => {
     expect(manager.logs('svc', seqs[0]).map((l) => l.seq)).toEqual(seqs.slice(1));
   }, T);
 
+  it('fails once, without crash loop, when the working directory does not exist', async () => {
+    const missing = path.join(dir, 'gone');
+    manager.start('svc', { command: 'node -e "process.exit(0)"', cwd: missing, source: 'manual' }, {});
+
+    expect(manager.status('svc')).toMatchObject({ status: 'failed', pid: null, restarts: 0 });
+    await new Promise((r) => setTimeout(r, 300)); // plus que le backoff de test (50 ms)
+    expect(manager.status('svc')).toMatchObject({ status: 'failed', restarts: 0 });
+    expect(manager.logs('svc', 0).map((l) => l.text)).toEqual([`✖ Dossier introuvable : ${missing}`]);
+
+    // Le dossier revient : un démarrage manuel fonctionne de nouveau.
+    fs.mkdirSync(missing);
+    manager.start('svc', { ...LONG, cwd: missing }, {});
+    await waitFor(() => grandChildPid('svc') !== undefined);
+    expect(manager.status('svc').status).toBe('running');
+  }, T);
+
   it('passes env to the child', async () => {
     manager.start('svc', spec(`node -e "console.log(process.env.FOO); setInterval(() => {}, 1000)"`), { FOO: 'bar-123' });
     await waitFor(() => manager.logs('svc', 0).some((l) => l.text === 'bar-123'));

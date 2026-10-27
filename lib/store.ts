@@ -11,10 +11,23 @@ function defaults(): StoredState {
 export function createStore(filePath: string): { load(): StoredState; save(state: StoredState): void } {
   return {
     load() {
+      let raw: string;
       try {
-        const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-        return { ...defaults(), ...parsed };
+        raw = fs.readFileSync(filePath, 'utf8');
       } catch {
+        return defaults(); // pas encore de fichier
+      }
+      try {
+        return { ...defaults(), ...JSON.parse(raw) };
+      } catch (err) {
+        // JSON illisible (édition manuelle ratée) : on le met de côté au lieu de l'écraser au prochain save.
+        const aside = `${filePath}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+        try {
+          fs.renameSync(filePath, aside);
+          console.error(`[store] ${filePath} illisible (${(err as Error).message}) — renommé en ${aside}, réglages par défaut`);
+        } catch (renameErr) {
+          console.error(`[store] ${filePath} illisible et impossible à renommer :`, renameErr);
+        }
         return defaults();
       }
     },

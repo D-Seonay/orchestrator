@@ -68,6 +68,14 @@ interface Entry {
 
 const isValidPid = (pid: unknown): pid is number => typeof pid === 'number' && Number.isInteger(pid) && pid > 0;
 
+function isDirectory(dir: string): boolean {
+  try {
+    return fs.statSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /** Creation time (ms epoch) of each live pid; pids that are gone or unreadable are omitted. */
 function readStartTimes(pids: number[]): Map<number, number> {
   const times = new Map<number, number>();
@@ -309,6 +317,12 @@ export class ProcessManager {
 
   private launch(entry: Entry): void {
     const spec = entry.spec!;
+    // Dossier supprimé ou renommé : un seul échec explicite, pas une boucle de plantages.
+    if (!isDirectory(spec.cwd)) {
+      this.push(entry, 'sys', `✖ Dossier introuvable : ${spec.cwd}`);
+      entry.status = 'failed';
+      return;
+    }
     let child: ChildProcess;
     try {
       if (!fs.existsSync(this.watchdogPath)) throw new Error(`watchdog introuvable (${this.watchdogPath})`);

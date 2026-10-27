@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -26,10 +26,26 @@ describe('store', () => {
     expect(createStore(file).load()).toEqual({ root: DEFAULT_ROOT, projects: {}, groups: {} });
   });
 
-  it('load returns defaults when file is corrupt JSON', () => {
+  it('load sets a corrupt file aside (never overwritten) and returns defaults', () => {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, '{oops');
-    expect(createStore(file).load()).toEqual({ root: DEFAULT_ROOT, projects: {}, groups: {} });
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const store = createStore(file);
+      expect(store.load()).toEqual({ root: DEFAULT_ROOT, projects: {}, groups: {} });
+      expect(errors).toHaveBeenCalledOnce();
+
+      const files = fs.readdirSync(path.dirname(file));
+      expect(files).toHaveLength(1);
+      expect(files[0]).toMatch(/^state\.json\.corrupt-\d{4}-\d{2}-\d{2}T[\d-]+Z$/);
+      expect(fs.readFileSync(path.join(path.dirname(file), files[0]), 'utf8')).toBe('{oops');
+
+      // Le save suivant crée un nouveau state.json sans toucher à la copie mise de côté.
+      store.save({ root: DEFAULT_ROOT, projects: {}, groups: {} });
+      expect(fs.readdirSync(path.dirname(file)).sort()).toEqual([files[0], 'state.json'].sort());
+    } finally {
+      errors.mockRestore();
+    }
   });
 
   it('save then load round-trips', () => {

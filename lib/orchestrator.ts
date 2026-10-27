@@ -168,7 +168,8 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     if (started) return;
     started = true;
     pm.cleanupOrphans();
-    refresh();
+    // Gardé comme les ticks : une erreur ici ne doit pas empêcher d'armer les timers et les hooks de sortie.
+    safeRefresh();
 
     setInterval(safeRefresh, REFRESH_INTERVAL_MS).unref();
     setInterval(() => {
