@@ -14,13 +14,14 @@ interface Props {
   onSelectGroup: (members: string[]) => void;
   onAction: (names: string[], action: RowAction) => void;
   onSwitchBranch: (names: string[]) => void;
+  onOpenLogs: (names: string[]) => void;
 }
 
 const BTN =
   'h-8 px-3 text-xs border border-zinc-700 text-zinc-300 transition-colors enabled:hover:border-zinc-400 enabled:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed';
 const INPUT = 'h-8 px-2 text-xs bg-black border border-zinc-700 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-400';
 
-export default function Toolbar({ root, rootExists, groups, selected, request, onSelectGroup, onAction, onSwitchBranch }: Props) {
+export default function Toolbar({ root, rootExists, groups, selected, request, onSelectGroup, onAction, onSwitchBranch, onOpenLogs }: Props) {
   const [rootDraft, setRootDraft] = useState<string | null>(null);
   const [groupName, setGroupName] = useState('');
   const none = selected.length === 0;
@@ -58,6 +59,9 @@ export default function Toolbar({ root, rootExists, groups, selected, request, o
         </button>
         <button className={`${BTN} enabled:hover:!border-yellow-400 enabled:hover:!text-yellow-400`} disabled={none} onClick={() => onAction(selected, 'restart')}>
           ↺ Redémarrer
+        </button>
+        <button className={BTN} disabled={none} onClick={() => onOpenLogs(selected)}>
+          Logs
         </button>
         <button className={BTN} disabled={none} onClick={() => onSwitchBranch(selected)}>
           Changer de branche

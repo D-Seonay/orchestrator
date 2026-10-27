@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import ProjectTable, { type RowAction } from '@/components/ProjectTable';
+import LogPanel from '@/components/LogPanel';
 import Toolbar from '@/components/Toolbar';
 import { sendJson, useDashboard } from '@/components/useDashboard';
 
@@ -9,6 +10,7 @@ export default function DashboardPage() {
   const { data, connected } = useDashboard();
   const [selection, setSelection] = useState<ReadonlySet<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  const [logNames, setLogNames] = useState<string[]>([]);
 
   const services = useMemo(() => data?.projects.filter((p) => p.kind === 'service') ?? [], [data]);
   const database = data?.projects.find((p) => p.kind === 'database') ?? null;
@@ -41,13 +43,15 @@ export default function DashboardPage() {
 
   const toggleAll = (names: string[], checked: boolean) => setSelection(checked ? new Set(names) : new Set());
 
-  // Tasks 8–10 : panneau de logs, tiroir de configuration, dialogue de changement de branche.
-  const openLogs = (names: string[]) => void names;
+  // Ouvrir des logs complète le panneau déjà ouvert (ordre d'ouverture conservé).
+  const openLogs = (names: string[]) => setLogNames((prev) => [...prev, ...names.filter((n) => !prev.includes(n))]);
+
+  // Tasks 9–10 : tiroir de configuration, dialogue de changement de branche.
   const openConfig = (name: string) => void name;
   const switchBranch = (names: string[]) => void names;
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className={`min-h-screen flex flex-col ${logNames.length > 0 ? 'pb-[40vh]' : ''}`}>
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 px-3 py-3">
         <div className="flex items-center gap-3">
           <span className="text-zinc-600 font-bold tracking-widest text-sm">ATD//</span>
@@ -89,6 +93,7 @@ export default function DashboardPage() {
             onSelectGroup={(members) => setSelection(new Set(members))}
             onAction={act}
             onSwitchBranch={switchBranch}
+            onOpenLogs={openLogs}
           />
           <ProjectTable
             projects={services}
@@ -103,6 +108,8 @@ export default function DashboardPage() {
       ) : (
         <p className="px-3 py-8 text-xs text-zinc-500">Connexion au serveur…</p>
       )}
+
+      {logNames.length > 0 && <LogPanel names={logNames} projects={services} onClose={() => setLogNames([])} />}
     </div>
   );
 }
