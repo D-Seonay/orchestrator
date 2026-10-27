@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { spawn } from 'child_process';
+import { spawn, execFileSync } from 'child_process';
 import { ProcessManager, type ProcessManagerOptions } from '@/lib/process-manager';
 import type { LaunchSpec } from '@/lib/types';
 
@@ -34,6 +34,8 @@ describe('ProcessManager', () => {
   let manager: ProcessManager;
 
   let managers: ProcessManager[];
+  // Throwaway processes spawned directly by a test, killed by exact pid in afterEach.
+  let extraPids: number[];
 
   const make = (opts: Partial<ProcessManagerOptions> = {}) => {
     manager = new ProcessManager({ pidFile, backoffMs: () => 50, crashWindowMs: 60_000, ...opts });
@@ -58,6 +60,7 @@ describe('ProcessManager', () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orch-pm-'));
     pidFile = path.join(dir, 'pids.json');
     managers = [];
+    extraPids = [];
     make();
   });
 
@@ -71,7 +74,7 @@ describe('ProcessManager', () => {
       m.killAll();
     }
     // Safety net: force-kill, by exact pid only, any grandchild we recorded that is still alive.
-    for (const pid of recorded) {
+    for (const pid of [...recorded, ...extraPids]) {
       if (isAlive(pid)) {
         try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
       }
@@ -293,6 +296,42 @@ describe('ProcessManager', () => {
     } finally {
       killQuietly(pid);
     }
+  }, T);
+
+  it('kills the service tree when the orchestrator process is hard-killed', async () => {
+    // Stand-in for the Orchestrator server: the watchdog watches this pid instead of the test runner.
+    const fakeOrchestrator = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000) // pm-fake-orchestrator'], { stdio: 'ignore' });
+    const orchestratorPid = fakeOrchestrator.pid!;
+    extraPids.push(orchestratorPid);
+    // Long backoff: the manager (which survives here, unlike in real life) must not relaunch during the test.
+    make({ orchestratorPid, backoffMs: () => 60_000 });
+    const grandChild = await startLong('svc');
+    const watchdog = manager.status('svc').pid!;
+    expect(isAlive(grandChild)).toBe(true);
+
+    if (process.platform === 'win32') execFileSync('taskkill', ['/pid', String(orchestratorPid), '/F'], { stdio: 'ignore' });
+    else process.kill(orchestratorPid, 'SIGKILL');
+
+    await waitFor(() => !isAlive(grandChild) && !isAlive(watchdog), 5000);
+  }, T);
+
+  it('kills the service tree when its real parent Orchestrator process is hard-killed', async () => {
+    // Unlike the test above, the watchdog's parent itself dies here (Windows job objects tie children to it).
+    const host = spawn(process.execPath, ['--import', 'tsx', path.join('tests', 'helpers', 'pm-host.ts'), path.join(dir, 'host-pids.json'), LONG.command], {
+      cwd: process.cwd(), stdio: ['ignore', 'pipe', 'inherit'],
+    });
+    extraPids.push(host.pid!);
+    let out = '';
+    host.stdout!.on('data', (d) => { out += String(d); });
+    await waitFor(() => /PIDS \d+ \d+/.test(out));
+    const [watchdog, grandChild] = /PIDS (\d+) (\d+)/.exec(out)!.slice(1).map(Number);
+    extraPids.push(watchdog, grandChild);
+    expect(isAlive(grandChild)).toBe(true);
+
+    if (process.platform === 'win32') execFileSync('taskkill', ['/pid', String(host.pid), '/F'], { stdio: 'ignore' });
+    else process.kill(host.pid!, 'SIGKILL');
+
+    await waitFor(() => !isAlive(grandChild) && !isAlive(watchdog), 5000);
   }, T);
 
   it('stop gives up after the timeout, logs it and settles to stopped', async () => {

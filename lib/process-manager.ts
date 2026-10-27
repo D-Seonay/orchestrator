@@ -16,6 +16,10 @@ export interface ProcessManagerOptions {
   stableMs?: number;
   /** How long stop() waits for the process to exit before giving up (default 10 s). */
   stopTimeoutMs?: number;
+  /** Pid the watchdog of each service watches; when it dies the service tree is killed (default process.pid). */
+  orchestratorPid?: number;
+  /** Absolute path of lib/watchdog.mjs (default: resolved from the project root, i.e. process.cwd()). */
+  watchdogPath?: string;
 }
 
 const IS_WINDOWS = process.platform === 'win32';
@@ -25,9 +29,12 @@ const DRAIN_TIMEOUT_MS = 250;
 // An orphan is only killed if its real creation time is this close to the recorded one (PID reuse guard).
 const START_TIME_TOLERANCE_MS = 5000;
 
+// Resolved from the project root: __dirname is meaningless once Next has bundled this file.
+const DEFAULT_WATCHDOG_PATH = path.join(process.cwd(), 'lib', 'watchdog.mjs');
+
 const defaultBackoff = (crashCount: number) => Math.min(1500 * 2 ** Math.max(0, crashCount - 1), 10_000);
 
-/** One spawned child, from spawn to exit. */
+/** One spawned watchdog (which runs the real command), from spawn to exit. */
 interface Run {
   child: ChildProcess;
   pid: number;
@@ -136,6 +143,8 @@ export class ProcessManager {
   private readonly backoffMs: (crashCount: number) => number;
   private readonly stableMs: number;
   private readonly stopTimeoutMs: number;
+  private readonly orchestratorPid: number;
+  private readonly watchdogPath: string;
 
   constructor(opts: ProcessManagerOptions) {
     this.pidFile = opts.pidFile;
@@ -145,6 +154,8 @@ export class ProcessManager {
     this.backoffMs = opts.backoffMs ?? defaultBackoff;
     this.stableMs = opts.stableMs ?? 10_000;
     this.stopTimeoutMs = opts.stopTimeoutMs ?? 10_000;
+    this.orchestratorPid = opts.orchestratorPid ?? process.pid;
+    this.watchdogPath = opts.watchdogPath ?? DEFAULT_WATCHDOG_PATH;
   }
 
   start(name: string, spec: LaunchSpec, env: Record<string, string>): void {
@@ -299,11 +310,16 @@ export class ProcessManager {
     const spec = entry.spec!;
     let child: ChildProcess;
     try {
-      child = spawn(spec.command, {
+      if (!fs.existsSync(this.watchdogPath)) throw new Error(`watchdog introuvable (${this.watchdogPath})`);
+      // The watchdog runs the command through a shell and kills its tree if the Orchestrator dies, even
+      // when hard-killed. The command travels as base64 so it is parsed by a shell exactly once.
+      const encoded = Buffer.from(spec.command, 'utf8').toString('base64');
+      child = spawn(process.execPath, [this.watchdogPath, String(this.orchestratorPid), encoded], {
         cwd: spec.cwd,
         env: { ...process.env, ...entry.env },
-        shell: true,
-        detached: !IS_WINDOWS,
+        // Windows too: a non-detached child joins libuv's kill-on-close job, so a hard kill of the
+        // Orchestrator would take the watchdog down before it can kill the service's descendants.
+        detached: true,
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       });

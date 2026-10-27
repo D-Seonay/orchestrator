@@ -55,7 +55,7 @@ Tout l'état est dans le dossier `data/` (ignoré par git) :
 | Fichier | Contenu |
 | --- | --- |
 | `data/state.json` | dossier racine, commandes et variables importées par projet, groupes. Écrit de façon atomique (fichier temporaire puis renommage). |
-| `data/pids.json` | pid et heure de démarrage des services en cours, pour nettoyer les orphelins. |
+| `data/pids.json` | pid et heure de démarrage du processus de surveillance de chaque service en cours, pour nettoyer les orphelins. |
 
 ⚠ `data/state.json` contient les **variables d'environnement en clair** (mots de passe, jetons…). Ne le commitez ni ne le partagez.
 
@@ -78,4 +78,4 @@ Le détail de chaque étape est écrit dans les logs du projet.
 
 ## Arrêt
 
-Arrêter Orchestrator (Ctrl+C, fermeture de la console…) **arrête tous les services lancés**, arbre de processus complet. Si Orchestrator est tué brutalement (`taskkill /F`, plantage), il ne peut pas nettoyer : au démarrage suivant, il tente de tuer les services orphelins enregistrés dans `data/pids.json` (uniquement si le pid correspond bien au processus enregistré, pour ne jamais tuer un pid réutilisé). Ce nettoyage est au mieux : si le processus racine d'un service est déjà mort, ses descendants (le `node` final lancé via `npm start`) peuvent rester actifs et sont à arrêter à la main.
+Arrêter Orchestrator (Ctrl+C, fermeture de la console…) **arrête tous les services lancés**, arbre de processus complet. C'est vrai aussi s'il est tué brutalement (`taskkill /F`, plantage) : chaque service tourne sous un petit processus de surveillance (`lib/watchdog.mjs`) qui vérifie chaque seconde que le serveur Orchestrator est vivant et, sinon, tue l'arbre complet du service puis s'arrête (délai d'environ une seconde). En dernier recours, au démarrage suivant, Orchestrator tue aussi les surveillants encore enregistrés dans `data/pids.json` (uniquement si le pid correspond bien au processus enregistré, pour ne jamais tuer un pid réutilisé).
