@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ProjectSettings, ProjectView, RunConfig } from '@/lib/types';
 import { requestJson } from '@/components/useDashboard';
+import { BTN as BASE_BTN, BTN_PRIMARY, ICON_BTN, INPUT as BASE_INPUT, LABEL } from '@/components/ui';
 
 interface Props {
   project: ProjectView;
@@ -19,10 +20,9 @@ interface EnvRow {
 const SECRET_KEY = /PASSWORD|SECRET|KEY|TOKEN/i;
 const AUTO = '';
 
-const BTN =
-  'h-7 px-2 text-xs border border-zinc-700 text-zinc-300 transition-colors enabled:hover:border-zinc-400 enabled:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed';
-const INPUT = 'h-7 px-2 text-xs bg-black border border-zinc-700 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-400';
-const LABEL = 'text-[10px] uppercase tracking-widest text-zinc-600';
+const BTN = `${BASE_BTN} !h-7 !px-2.5`;
+// Commande et variables : police à chasse fixe, comme dans un fichier .env.
+const INPUT = `${BASE_INPUT} !h-7 font-mono text-xs`;
 
 const originLabel = (launch: ProjectSettings['launch']) => {
   if (!launch) return 'aucune commande de lancement';
@@ -167,26 +167,26 @@ export default function ConfigDrawer({ project, onClose }: Props) {
     });
 
   return (
-    <div className="fixed inset-0 z-30 flex justify-end bg-black/60" onMouseDown={(e) => e.target === e.currentTarget && close()}>
+    <div className="fixed inset-0 z-30 flex justify-end bg-[rgba(15,15,15,0.25)]" onMouseDown={(e) => e.target === e.currentTarget && close()}>
       <aside
         role="dialog"
         aria-modal="true"
         aria-label={`Configuration de ${name}`}
-        className="h-full w-full max-w-2xl flex flex-col border-l border-zinc-600 bg-zinc-950 text-xs"
+        className="h-full w-full max-w-2xl flex flex-col bg-white text-[13px] shadow-[0_0_24px_rgba(15,15,15,0.12)]"
       >
-        <header className="flex items-center justify-between gap-3 px-3 py-2 border-b border-zinc-800">
+        <header className="flex items-center justify-between gap-3 px-5 py-3 border-b border-line">
           <div className="flex items-baseline gap-3 min-w-0">
             <span className={LABEL}>Configuration</span>
-            <h2 className="text-zinc-100 font-bold truncate">{name}</h2>
+            <h2 className="text-base font-semibold text-ink truncate">{name}</h2>
           </div>
-          <button className={BTN} onClick={close} aria-label="Fermer la configuration" title="Fermer">
+          <button className={ICON_BTN} onClick={close} aria-label="Fermer la configuration" title="Fermer">
             ×
           </button>
         </header>
 
-        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-5">
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
           {!loaded ? (
-            <p className="text-zinc-500">{message?.kind === 'error' ? '' : 'Chargement…'}</p>
+            <p className="text-muted">{message?.kind === 'error' ? '' : 'Chargement…'}</p>
           ) : (
             <>
               <section className="space-y-2">
@@ -200,13 +200,13 @@ export default function ConfigDrawer({ project, onClose }: Props) {
                     className={`${INPUT} w-full`}
                   />
                 </label>
-                <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-zinc-400">
+                <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-ink-soft">
                   <dt className={LABEL}>Dossier</dt>
-                  <dd className="break-all text-zinc-300" title="Lecture seule">
+                  <dd className="break-all font-mono text-xs" title="Lecture seule">
                     {launch?.cwd ?? project.path}
                   </dd>
                   <dt className={LABEL}>Origine</dt>
-                  <dd className="text-zinc-300">{originLabel(launch)}</dd>
+                  <dd>{originLabel(launch)}</dd>
                 </dl>
               </section>
 
@@ -220,7 +220,7 @@ export default function ConfigDrawer({ project, onClose }: Props) {
                     + Ajouter
                   </button>
                 </div>
-                {rows.length === 0 && <p className="text-zinc-600">Aucune variable.</p>}
+                {rows.length === 0 && <p className="text-muted">Aucune variable.</p>}
                 {rows.map((row) => {
                   const secret = SECRET_KEY.test(row.key);
                   const shown = !secret || revealed.has(row.id);
@@ -232,7 +232,7 @@ export default function ConfigDrawer({ project, onClose }: Props) {
                         placeholder="NOM"
                         aria-label="Nom de la variable"
                         spellCheck={false}
-                        className={`${INPUT} w-2/5 font-bold`}
+                        className={`${INPUT} w-2/5 font-semibold`}
                       />
                       <input
                         value={row.value}
@@ -255,10 +255,10 @@ export default function ConfigDrawer({ project, onClose }: Props) {
                           {shown ? '🙈' : '👁'}
                         </button>
                       ) : (
-                        <span className="w-7" aria-hidden />
+                        <span className="w-7 shrink-0" aria-hidden />
                       )}
                       <button
-                        className={`${BTN} enabled:hover:border-red-500 enabled:hover:text-red-400`}
+                        className={`${ICON_BTN} enabled:hover:text-danger-text`}
                         onClick={() => edit(() => setRows((prev) => prev.filter((r) => r.id !== row.id)))}
                         aria-label={`Supprimer ${row.key || 'la variable'}`}
                         title="Supprimer"
@@ -270,14 +270,14 @@ export default function ConfigDrawer({ project, onClose }: Props) {
                 })}
               </section>
 
-              <section className="space-y-2 border-t border-zinc-800 pt-4">
+              <section className="space-y-2 border-t border-line pt-5">
                 <span className={LABEL}>Réimporter</span>
                 <div className="flex flex-wrap items-center gap-2">
                   <select
                     value={configKey}
                     onChange={(e) => setConfigKey(e.target.value)}
                     aria-label="Configuration IntelliJ à importer"
-                    className={`${INPUT} min-w-0 max-w-full flex-1`}
+                    className={`${BASE_INPUT} !h-7 min-w-0 max-w-full flex-1`}
                   >
                     <option value={AUTO}>Détection automatique</option>
                     {configs.map((c) => (
@@ -291,9 +291,9 @@ export default function ConfigDrawer({ project, onClose }: Props) {
                     Réimporter depuis IntelliJ/.env
                   </button>
                 </div>
-                {configs.length === 0 && <p className="text-zinc-600">Aucune configuration IntelliJ trouvée pour ce projet.</p>}
+                {configs.length === 0 && <p className="text-muted">Aucune configuration IntelliJ trouvée pour ce projet.</p>}
                 {confirmReimport && (
-                  <div role="alertdialog" className="flex flex-wrap items-center gap-2 border border-orange-700 bg-orange-950/30 px-2 py-2 text-orange-300">
+                  <div role="alertdialog" className="flex flex-wrap items-center gap-2 rounded-md bg-warn-soft px-3 py-2 text-ink">
                     <span className="flex-1">Réimporter remplace la commande et les variables actuelles. Continuer ?</span>
                     <button className={BTN} disabled={busy} onClick={reimport}>
                       Remplacer
@@ -308,15 +308,15 @@ export default function ConfigDrawer({ project, onClose }: Props) {
           )}
         </div>
 
-        <footer className="px-3 py-2 border-t border-zinc-800 space-y-2">
+        <footer className="px-5 py-3 border-t border-line space-y-2">
           {message && (
-            <p role={message.kind === 'error' ? 'alert' : 'status'} className={message.kind === 'error' ? 'text-red-400' : 'text-green-400'}>
+            <p role={message.kind === 'error' ? 'alert' : 'status'} className={message.kind === 'error' ? 'text-danger-text' : 'text-ok-text'}>
               {message.text}
             </p>
           )}
-          {problem && dirty && <p className="text-orange-400">{problem}</p>}
+          {problem && dirty && <p className="text-warn">{problem}</p>}
           {needsRestart && running && (
-            <div className="flex items-center justify-between gap-2 border border-orange-700 bg-orange-950/30 px-2 py-1 text-orange-300">
+            <div className="flex items-center justify-between gap-2 rounded-md bg-warn-soft px-3 py-1.5 text-ink">
               <span>Redémarrer pour appliquer.</span>
               <button className={BTN} disabled={busy} onClick={restart}>
                 Redémarrer
@@ -324,8 +324,8 @@ export default function ConfigDrawer({ project, onClose }: Props) {
             </div>
           )}
           <div className="flex items-center justify-between gap-3">
-            <span className="text-zinc-500">Stocké dans Orchestrator — vos dépôts ne sont pas modifiés.</span>
-            <button className={`${BTN} border-zinc-500 text-zinc-100`} disabled={!loaded || !dirty || busy || problem !== null} onClick={save}>
+            <span className="text-muted">Stocké dans Orchestrator — vos dépôts ne sont pas modifiés.</span>
+            <button className={BTN_PRIMARY} disabled={!loaded || !dirty || busy || problem !== null} onClick={save}>
               Enregistrer
             </button>
           </div>

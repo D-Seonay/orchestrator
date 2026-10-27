@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import type { ProjectView, SwitchResult } from '@/lib/types';
 import { requestJson } from '@/components/useDashboard';
+import { BTN, BTN_PRIMARY, ICON_BTN, INPUT, LABEL, TAG } from '@/components/ui';
 
 interface Props {
   /** Projets ciblés (services et/ou base de données). */
@@ -11,10 +12,6 @@ interface Props {
   onClose: () => void;
 }
 
-const BTN =
-  'h-8 px-3 text-xs border border-zinc-700 text-zinc-300 transition-colors enabled:hover:border-zinc-400 enabled:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed';
-const INPUT = 'h-8 px-2 text-xs bg-black border border-zinc-700 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-400';
-const LABEL = 'text-[10px] uppercase tracking-widest text-zinc-600';
 
 const isActive = (p: ProjectView) => p.status === 'running' || p.status === 'restarting';
 
@@ -97,19 +94,19 @@ export default function BranchDialog({ names, projects, onClose }: Props) {
   const done = results !== null;
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 p-4" onMouseDown={(e) => e.target === e.currentTarget && close()}>
-      <div role="dialog" aria-modal="true" aria-label="Changer de branche" className="w-full max-w-xl max-h-full flex flex-col border border-zinc-600 bg-zinc-950 text-xs">
-        <header className="flex items-center justify-between gap-3 px-3 py-2 border-b border-zinc-800">
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-[rgba(15,15,15,0.25)] p-4" onMouseDown={(e) => e.target === e.currentTarget && close()}>
+      <div role="dialog" aria-modal="true" aria-label="Changer de branche" className="w-full max-w-xl max-h-full flex flex-col rounded-[10px] bg-white text-[13px] shadow-[0_8px_32px_rgba(15,15,15,0.16)]">
+        <header className="flex items-center justify-between gap-3 px-5 py-3 border-b border-line">
           <div className="flex items-baseline gap-3 min-w-0">
             <span className={LABEL}>Changer de branche</span>
-            <h2 className="text-zinc-100 font-bold truncate">{targets.map((p) => p.name).join(', ')}</h2>
+            <h2 className="font-semibold text-ink truncate">{targets.map((p) => p.name).join(', ')}</h2>
           </div>
-          <button className={BTN} onClick={close} disabled={busy} aria-label="Fermer" title="Fermer">
+          <button className={ICON_BTN} onClick={close} disabled={busy} aria-label="Fermer" title="Fermer">
             ×
           </button>
         </header>
 
-        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-4">
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
           {!done && (
             <>
               <form
@@ -129,7 +126,7 @@ export default function BranchDialog({ names, projects, onClose }: Props) {
                     spellCheck={false}
                     autoFocus
                     autoComplete="off"
-                    className={`${INPUT} w-full`}
+                    className={`${INPUT} w-full font-mono text-xs`}
                   />
                   <datalist id={listId}>
                     {branches.map((b) => (
@@ -137,21 +134,21 @@ export default function BranchDialog({ names, projects, onClose }: Props) {
                     ))}
                   </datalist>
                 </label>
-                {branchesError && <p className="text-red-400">Branches indisponibles : {branchesError}</p>}
-                {!branchesError && branches.length === 0 && <p className="text-zinc-600">Chargement des branches…</p>}
+                {branchesError && <p className="text-danger-text">Branches indisponibles : {branchesError}</p>}
+                {!branchesError && branches.length === 0 && <p className="text-muted">Chargement des branches…</p>}
               </form>
 
               {(willRestart.length > 0 || willBlock.length > 0) && (
                 <div className="space-y-2">
                   {willRestart.length > 0 && (
-                    <p className="border border-yellow-700 bg-yellow-950/30 px-2 py-1 text-yellow-300">
-                      Seront redémarrés : <span className="font-bold">{willRestart.map((p) => p.name).join(', ')}</span>
+                    <p className="rounded-md bg-accent-soft px-3 py-1.5 text-ink">
+                      Seront redémarrés : <span className="font-medium">{willRestart.map((p) => p.name).join(', ')}</span>
                     </p>
                   )}
                   {willBlock.length > 0 && (
-                    <p className="border border-orange-700 bg-orange-950/30 px-2 py-1 text-orange-300">
+                    <p className="rounded-md bg-warn-soft px-3 py-1.5 text-ink">
                       Seront bloqués (modifications locales) :{' '}
-                      <span className="font-bold">{willBlock.map((p) => `${p.name} (${p.git?.dirtyFiles})`).join(', ')}</span>
+                      <span className="font-medium">{willBlock.map((p) => `${p.name} (${p.git?.dirtyFiles})`).join(', ')}</span>
                     </p>
                   )}
                 </div>
@@ -170,22 +167,22 @@ export default function BranchDialog({ names, projects, onClose }: Props) {
                   return (
                     <li key={name} className="flex items-baseline gap-2 flex-wrap">
                       <span aria-hidden>{result.ok ? '✅' : '⚠️'}</span>
-                      <span className="font-bold text-zinc-100">{name}</span>
+                      <span className="font-medium text-ink">{name}</span>
                       {result.ok ? (
-                        <span className="text-yellow-400">{switchedTo}</span>
+                        <span className={`${TAG} bg-tag text-ink-soft`}>{switchedTo}</span>
                       ) : (
-                        <span className="text-orange-400">{failureText(result, project)}</span>
+                        <span className="text-warn">{failureText(result, project)}</span>
                       )}
-                      {result.installed && <span className="text-zinc-400">· npm install lancé</span>}
-                      {result.restarted && <span className="text-zinc-400">· redémarré</span>}
-                      {result.ok && result.detail && <span className="text-zinc-500">· {result.detail}</span>}
+                      {result.installed && <span className="text-muted">· npm install lancé</span>}
+                      {result.restarted && <span className="text-muted">· redémarré</span>}
+                      {result.ok && result.detail && <span className="text-muted">· {result.detail}</span>}
                     </li>
                   );
                 })}
               </ul>
 
               {dirtyFailures.length > 0 && (
-                <div className="space-y-2 border border-orange-700 bg-orange-950/30 px-2 py-2 text-orange-300">
+                <div className="space-y-2 rounded-md bg-warn-soft px-3 py-2 text-ink">
                   <p>Vos modifications seront mises de côté (git stash) sur la branche actuelle, pas réappliquées.</p>
                   <button
                     className={BTN}
@@ -206,16 +203,16 @@ export default function BranchDialog({ names, projects, onClose }: Props) {
           )}
         </div>
 
-        <footer className="px-3 py-2 border-t border-zinc-800 space-y-2">
+        <footer className="px-5 py-3 border-t border-line space-y-2">
           {error && (
-            <p role="alert" className="text-red-400">
+            <p role="alert" className="text-danger-text">
               {error}
             </p>
           )}
           <div className="flex items-center justify-end gap-2">
             {!done && (
               <button
-                className={`${BTN} border-zinc-500 text-zinc-100`}
+                className={BTN_PRIMARY}
                 disabled={target === '' || busy}
                 onClick={() => void run(targetNames, target, false)}
               >

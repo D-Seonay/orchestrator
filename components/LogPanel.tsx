@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { LogLine, ProjectView, RunStatus } from '@/lib/types';
 import { isErrorLog, stripAnsi } from '@/lib/utils';
+import { ICON_BTN, BTN as BASE_BTN, INPUT as BASE_INPUT, LABEL } from './ui';
 
 interface Props {
   /** Projets dont les logs sont ouverts (ordre d'ouverture = ordre des couleurs). */
@@ -20,18 +21,18 @@ const RENDER_LIMIT = 2000;
 const FOLLOW_THRESHOLD_PX = 24;
 
 // Classes littérales (Tailwind ne détecte pas les noms construits dynamiquement).
-const PALETTE = ['text-cyan-400', 'text-fuchsia-400', 'text-yellow-400', 'text-green-400', 'text-sky-400', 'text-orange-400', 'text-pink-400', 'text-lime-400'];
+// Couleurs de texte Notion (bleu, violet, orange, vert, rose, marron, rouge, jaune).
+const PALETTE = ['text-[#337ea9]', 'text-[#9065b0]', 'text-[#d9730d]', 'text-[#448361]', 'text-[#c14c8a]', 'text-[#9f6b53]', 'text-[#d44c47]', 'text-[#cb912f]'];
 
 const STATUS_DOT: Record<RunStatus, string> = {
-  running: 'bg-green-500',
-  restarting: 'bg-orange-500 animate-pulse',
-  failed: 'bg-red-500',
-  stopped: 'bg-zinc-600',
+  running: 'bg-ok',
+  restarting: 'bg-warn animate-pulse',
+  failed: 'bg-danger',
+  stopped: 'bg-idle',
 };
 
-const BTN =
-  'h-7 px-2 text-xs border border-zinc-700 text-zinc-300 transition-colors enabled:hover:border-zinc-400 enabled:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed';
-const INPUT = 'h-7 px-2 text-xs bg-black border border-zinc-700 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-400';
+const BTN = `${BASE_BTN} !h-7 !px-2.5`;
+const INPUT = `${BASE_INPUT} !h-7`;
 
 interface TaggedLine extends LogLine {
   project: string;
@@ -130,7 +131,7 @@ function Highlighted({ text, pattern }: { text: string; pattern: RegExp | null }
     <>
       {text.split(pattern).map((part, i) =>
         i % 2 === 1 ? (
-          <mark key={i} className="bg-yellow-400 text-black">
+          <mark key={i} className="bg-note-soft text-ink rounded-sm">
             {part}
           </mark>
         ) : (
@@ -144,11 +145,11 @@ function Highlighted({ text, pattern }: { text: string; pattern: RegExp | null }
 const timeFmt = new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
 function LogRow({ line, color, pattern }: { line: TaggedLine; color: string; pattern: RegExp | null }) {
-  const tone = line.stream === 'err' ? 'text-red-400' : line.stream === 'sys' ? 'text-zinc-500 italic' : 'text-zinc-300';
+  const tone = line.stream === 'err' ? 'text-danger-text' : line.stream === 'sys' ? 'text-muted italic' : 'text-ink';
   return (
-    <div className="flex gap-2 px-3 hover:bg-zinc-900/60">
-      <span className="text-zinc-600 tabular-nums shrink-0">{timeFmt.format(line.ts)}</span>
-      <span className={`${color} w-32 shrink-0 truncate font-bold`} title={line.project}>
+    <div className="flex gap-2 px-4 hover:bg-line-soft">
+      <span className="text-muted tabular-nums shrink-0">{timeFmt.format(line.ts)}</span>
+      <span className={`${color} w-32 shrink-0 truncate font-medium`} title={line.project}>
         {line.project}
       </span>
       <span className={`${tone} whitespace-pre-wrap break-all min-w-0`}>
@@ -208,16 +209,16 @@ export default function LogPanel({ names, projects, connected, onClose }: Props)
   const statusOf = (name: string) => projects.find((p) => p.name === name)?.status ?? 'stopped';
 
   return (
-    <section aria-label="Logs" className="fixed inset-x-0 bottom-0 z-20 h-[40vh] flex flex-col border-t border-zinc-600 bg-black">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2 border-b border-zinc-800 bg-zinc-950 text-xs">
-        <span className="text-[10px] uppercase tracking-widest text-zinc-600">Logs</span>
+    <section aria-label="Logs" className="fixed inset-x-0 bottom-0 z-20 h-[40vh] flex flex-col border-t border-line bg-white shadow-[0_-4px_16px_rgba(15,15,15,0.06)]">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2 border-b border-line text-[13px]">
+        <span className="font-semibold text-ink">Logs</span>
 
         <span className="flex flex-wrap items-center gap-3">
           {names.map((name, i) => (
             <label key={name} className="flex items-center gap-1.5 cursor-pointer">
-              <input type="checkbox" checked={!hidden.has(name)} onChange={() => toggleProject(name)} className="accent-zinc-300" />
+              <input type="checkbox" checked={!hidden.has(name)} onChange={() => toggleProject(name)} className="accent-accent" />
               <span className={`w-2 h-2 rounded-full ${STATUS_DOT[statusOf(name)]}`} aria-hidden />
-              <span className={`${PALETTE[i % PALETTE.length]} font-bold`}>{name}</span>
+              <span className={`${PALETTE[i % PALETTE.length]} font-medium`}>{name}</span>
             </label>
           ))}
         </span>
@@ -231,26 +232,26 @@ export default function LogPanel({ names, projects, connected, onClose }: Props)
             spellCheck={false}
             className={`${INPUT} w-48`}
           />
-          <label className="flex items-center gap-1.5 text-zinc-400 cursor-pointer">
-            <input type="checkbox" checked={matchOnly} onChange={(e) => setMatchOnly(e.target.checked)} className="accent-zinc-300" />
+          <label className="flex items-center gap-1.5 text-ink-soft cursor-pointer">
+            <input type="checkbox" checked={matchOnly} onChange={(e) => setMatchOnly(e.target.checked)} className="accent-accent" />
             Seulement les lignes correspondantes
           </label>
-          <label className="flex items-center gap-1.5 text-zinc-400 cursor-pointer">
-            <input type="checkbox" checked={errorsOnly} onChange={(e) => setErrorsOnly(e.target.checked)} className="accent-zinc-300" />
+          <label className="flex items-center gap-1.5 text-ink-soft cursor-pointer">
+            <input type="checkbox" checked={errorsOnly} onChange={(e) => setErrorsOnly(e.target.checked)} className="accent-accent" />
             Erreurs seulement
           </label>
           <button className={BTN} onClick={clear}>
             Effacer
           </button>
-          <button className={BTN} onClick={onClose} aria-label="Fermer le panneau de logs" title="Fermer">
+          <button className={ICON_BTN} onClick={onClose} aria-label="Fermer le panneau de logs" title="Fermer">
             ×
           </button>
         </span>
       </div>
 
-      <div ref={scroller} onScroll={onScroll} className="flex-1 overflow-y-auto py-1 text-xs leading-5">
+      <div ref={scroller} onScroll={onScroll} className="flex-1 overflow-y-auto py-2 bg-code font-mono text-xs leading-5">
         {shown.length === 0 ? (
-          <p className="px-3 py-2 text-zinc-600">{merged.length === 0 ? 'Aucune ligne de log pour le moment.' : 'Aucune ligne ne correspond aux filtres.'}</p>
+          <p className="px-4 py-2 font-sans text-[13px] text-muted">{merged.length === 0 ? 'Aucune ligne de log pour le moment.' : 'Aucune ligne ne correspond aux filtres.'}</p>
         ) : (
           shown.map((l) => (
             <LogRow key={`${l.project}:${l.seq}`} line={l} color={PALETTE[names.indexOf(l.project) % PALETTE.length]} pattern={pattern} />
@@ -258,13 +259,13 @@ export default function LogPanel({ names, projects, connected, onClose }: Props)
         )}
       </div>
 
-      <div className="flex items-center justify-between px-3 py-1 border-t border-zinc-800 bg-zinc-950 text-[10px] text-zinc-500">
+      <div className={`flex items-center justify-between px-4 py-1 border-t border-line ${LABEL}`}>
         <span>
           {shown.length} ligne(s) affichée(s) sur {merged.length}
           {visible.length > RENDER_LIMIT && ` (les ${RENDER_LIMIT} dernières)`}
         </span>
         {!follow && (
-          <button className="text-zinc-300 hover:text-white" onClick={() => setFollow(true)}>
+          <button className="text-accent hover:text-accent-strong" onClick={() => setFollow(true)}>
             ↓ Reprendre le suivi
           </button>
         )}

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { sendJson } from './useDashboard';
 import type { RowAction } from './ProjectTable';
+import { BTN, BTN_PRIMARY, INPUT, LABEL } from './ui';
 
 interface Props {
   root: string;
@@ -17,9 +18,6 @@ interface Props {
   onOpenLogs: (names: string[]) => void;
 }
 
-const BTN =
-  'h-8 px-3 text-xs border border-zinc-700 text-zinc-300 transition-colors enabled:hover:border-zinc-400 enabled:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed';
-const INPUT = 'h-8 px-2 text-xs bg-black border border-zinc-700 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-400';
 
 export default function Toolbar({ root, rootExists, groups, selected, request, onSelectGroup, onAction, onSwitchBranch, onOpenLogs }: Props) {
   const [rootDraft, setRootDraft] = useState<string | null>(null);
@@ -46,18 +44,18 @@ export default function Toolbar({ root, rootExists, groups, selected, request, o
   };
 
   return (
-    <div className="flex flex-col gap-3 px-3 py-3 border-b border-zinc-800 bg-zinc-950">
+    <div className="flex flex-col gap-3 px-8 pb-5">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[10px] uppercase tracking-widest text-zinc-600 mr-1">
-          Sélection <span className="text-zinc-300">{selected.length}</span>
+        <span className={`${LABEL} mr-1`}>
+          {selected.length} sélectionné{selected.length > 1 ? 's' : ''}
         </span>
-        <button className={`${BTN} enabled:hover:!border-green-400 enabled:hover:!text-green-400`} disabled={none} onClick={() => onAction(selected, 'start')}>
+        <button className={BTN_PRIMARY} disabled={none} onClick={() => onAction(selected, 'start')}>
           ▶ Démarrer
         </button>
-        <button className={`${BTN} enabled:hover:!border-red-400 enabled:hover:!text-red-400`} disabled={none} onClick={() => onAction(selected, 'stop')}>
+        <button className={BTN} disabled={none} onClick={() => onAction(selected, 'stop')}>
           ■ Arrêter
         </button>
-        <button className={`${BTN} enabled:hover:!border-yellow-400 enabled:hover:!text-yellow-400`} disabled={none} onClick={() => onAction(selected, 'restart')}>
+        <button className={BTN} disabled={none} onClick={() => onAction(selected, 'restart')}>
           ↺ Redémarrer
         </button>
         <button className={BTN} disabled={none} onClick={() => onOpenLogs(selected)}>
@@ -82,28 +80,28 @@ export default function Toolbar({ root, rootExists, groups, selected, request, o
             className={`${INPUT} w-40`}
           />
           <button type="submit" className={BTN} disabled={none || groupName.trim() === ''}>
-            Enregistrer la sélection comme groupe
+            Enregistrer comme groupe
           </button>
         </form>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 min-h-7">
-        <span className="text-[10px] uppercase tracking-widest text-zinc-600 mr-1">Groupes</span>
-        {groupEntries.length === 0 && <span className="text-xs text-zinc-600">Aucun groupe enregistré</span>}
+        <span className={`${LABEL} mr-1`}>Groupes</span>
+        {groupEntries.length === 0 && <span className="text-[13px] text-muted">Aucun groupe enregistré</span>}
         {groupEntries.map(([name, members]) => (
-          <span key={name} className="inline-flex items-stretch border border-zinc-700 text-xs">
+          <span key={name} className="inline-flex items-stretch rounded-md bg-tag text-[13px] text-ink-soft overflow-hidden">
             <button
               onClick={() => onSelectGroup(members)}
               title={members.join(', ') || 'Groupe vide'}
-              className="px-2 py-1 text-zinc-200 hover:bg-zinc-800"
+              className="px-2 py-0.5 hover:bg-line"
             >
-              {name} <span className="text-zinc-500">({members.length})</span>
+              {name} <span className="text-muted">{members.length}</span>
             </button>
             <button
               onClick={() => deleteGroup(name)}
               aria-label={`Supprimer le groupe ${name}`}
               title="Supprimer le groupe"
-              className="px-1.5 border-l border-zinc-700 text-zinc-500 hover:bg-red-950 hover:text-red-400"
+              className="px-1.5 text-muted hover:bg-danger-soft hover:text-danger-text"
             >
               ×
             </button>
@@ -118,7 +116,7 @@ export default function Toolbar({ root, rootExists, groups, selected, request, o
           if (rootDirty) void applyRoot();
         }}
       >
-        <label htmlFor="root-input" className="text-[10px] uppercase tracking-widest text-zinc-600 mr-1">
+        <label htmlFor="root-input" className={`${LABEL} mr-1`}>
           Dossier racine
         </label>
         <input
@@ -126,18 +124,18 @@ export default function Toolbar({ root, rootExists, groups, selected, request, o
           value={rootValue}
           onChange={(e) => setRootDraft(e.target.value)}
           spellCheck={false}
-          className={`${INPUT} w-[28rem] max-w-full ${rootExists ? '' : '!border-red-700'}`}
+          className={`${INPUT} w-[28rem] max-w-full font-mono text-xs ${rootExists ? '' : '!border-danger'}`}
         />
         <button type="submit" className={BTN} disabled={!rootDirty}>
           Appliquer
         </button>
         {rootDraft !== null && (
-          <button type="button" className="text-xs text-zinc-500 hover:text-zinc-300" onClick={() => setRootDraft(null)}>
+          <button type="button" className="text-[13px] text-muted hover:text-ink" onClick={() => setRootDraft(null)}>
             Annuler
           </button>
         )}
         {!rootExists && (
-          <span className="text-xs text-red-400" role="alert">
+          <span className="text-[13px] text-danger-text" role="alert">
             ⚠ Ce dossier n’existe pas : aucun projet ne peut être détecté.
           </span>
         )}

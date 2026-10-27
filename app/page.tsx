@@ -6,6 +6,7 @@ import BranchDialog from '@/components/BranchDialog';
 import ConfigDrawer from '@/components/ConfigDrawer';
 import LogPanel from '@/components/LogPanel';
 import Toolbar from '@/components/Toolbar';
+import { ICON_BTN } from '@/components/ui';
 import { sendJson, useDashboard } from '@/components/useDashboard';
 
 export default function DashboardPage() {
@@ -54,40 +55,37 @@ export default function DashboardPage() {
 
   return (
     <div className={`min-h-screen flex flex-col ${logNames.length > 0 ? 'pb-[40vh]' : ''}`}>
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 px-3 py-3">
-        <div className="flex items-center gap-3">
-          <span className="text-zinc-600 font-bold tracking-widest text-sm">ATD//</span>
-          <h1 className="text-zinc-300 text-xs tracking-wider uppercase">Orchestrator</h1>
-        </div>
-        <div className="flex items-center gap-5 text-xs">
+      <header className="flex flex-wrap items-center justify-between gap-3 px-8 pt-7 pb-4">
+        <h1 className="text-2xl font-bold tracking-tight text-ink">🚦 Orchestrator</h1>
+        <div className="flex items-center gap-4 text-[13px] text-muted">
           {data && (
-            <span className="text-zinc-400" title="Base de données gérée à part (non lançable)">
-              Base : <span className="text-zinc-100">{data.dbVersion ?? 'version inconnue'}</span>
-              {database?.git && <span className="text-yellow-400"> ({database.git.branch})</span>}
+            <span className="flex items-center gap-1.5" title="Base de données gérée à part (non lançable)">
+              Base <span className="font-mono text-ink-soft">{data.dbVersion ?? 'version inconnue'}</span>
+              {database?.git && <span className="font-mono">· {database.git.branch}</span>}
               {database?.git && (
                 <button
                   onClick={() => setBranchNames([database.name])}
                   disabled={database.busy}
-                  className="ml-2 px-1.5 h-5 border border-zinc-700 text-zinc-300 transition-colors enabled:hover:border-zinc-400 enabled:hover:text-white disabled:opacity-30"
+                  className={ICON_BTN}
+                  title="Changer la branche de la base"
+                  aria-label="Changer la branche de la base"
                 >
-                  Changer de branche
+                  ⎇
                 </button>
               )}
             </span>
           )}
-          <span className="flex items-center gap-2">
-            <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500 animate-pulse'}`} aria-hidden />
-            <span className={`uppercase tracking-widest ${connected ? 'text-zinc-500' : 'text-red-400'}`}>
-              {connected ? 'Connecté' : 'Reconnexion…'}
-            </span>
+          <span className="flex items-center gap-1.5">
+            <span className={`w-2 h-2 rounded-full ${connected ? 'bg-ok' : 'bg-danger animate-pulse'}`} aria-hidden />
+            <span className={connected ? '' : 'text-danger-text'}>{connected ? 'Connecté' : 'Reconnexion…'}</span>
           </span>
         </div>
       </header>
 
       {error && (
-        <div role="alert" className="flex items-center justify-between gap-3 px-3 py-2 text-xs bg-red-950/50 border-b border-red-900 text-red-300">
+        <div role="alert" className="mx-8 mb-3 flex items-center justify-between gap-3 rounded-md px-3 py-2 text-[13px] bg-danger-soft text-danger-text">
           <span>{error}</span>
-          <button onClick={() => setError(null)} aria-label="Fermer l’erreur" className="text-red-400 hover:text-red-200">
+          <button onClick={() => setError(null)} aria-label="Fermer l’erreur" className="opacity-70 hover:opacity-100">
             ×
           </button>
         </div>
@@ -118,7 +116,7 @@ export default function DashboardPage() {
           />
         </>
       ) : (
-        <p className="px-3 py-8 text-xs text-zinc-500">Connexion au serveur…</p>
+        <p className="px-8 py-8 text-muted">Connexion au serveur…</p>
       )}
 
       {configProject && <ConfigDrawer key={configProject.name} project={configProject} onClose={() => setConfigName(null)} />}
