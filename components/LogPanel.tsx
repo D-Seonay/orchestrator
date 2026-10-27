@@ -8,10 +8,13 @@ interface Props {
   /** Projets dont les logs sont ouverts (ordre d'ouverture = ordre des couleurs). */
   names: string[];
   projects: ProjectView[];
+  /** Liaison SSE du tableau de bord : un retour de connexion déclenche une resynchronisation. */
+  connected: boolean;
   onClose: () => void;
 }
 
 const POLL_MS = 1000;
+const FETCH_TIMEOUT_MS = 5000;
 const BUFFER_SIZE = 5000;
 const RENDER_LIMIT = 2000;
 const FOLLOW_THRESHOLD_PX = 24;
@@ -34,31 +37,69 @@ interface TaggedLine extends LogLine {
   project: string;
 }
 
-/** Interroge /logs?since=<dernier seq> de chaque projet ouvert, toutes les secondes, et garde 5000 lignes par projet. */
-function useLogBuffers(names: string[]) {
+/**
+ * Interroge /logs?since=<dernier seq> de chaque projet ouvert, toutes les secondes, et garde 5000 lignes par projet.
+ * Après un échec réseau ou une reconnexion SSE, le serveur a pu redémarrer (seq repart de 0) :
+ * les projets ouverts sont alors resynchronisés (since=0, tampon remplacé).
+ */
+function useLogBuffers(names: string[], connected: boolean) {
   const [buffers, setBuffers] = useState<Record<string, LogLine[]>>({});
   const lastSeq = useRef<Record<string, number>>({});
+  const needsResync = useRef(new Set<string>());
+  const wasConnected = useRef(connected);
   const namesKey = names.join('\n');
+
+  // Reconnexion SSE (déconnecté → connecté) : tous les projets ouverts sont à resynchroniser.
+  useEffect(() => {
+    if (connected && !wasConnected.current) namesKey.split('\n').forEach((n) => needsResync.current.add(n));
+    wasConnected.current = connected;
+  }, [connected, namesKey]);
 
   useEffect(() => {
     const open = namesKey.split('\n');
     const inFlight = new Set<string>();
+    const controllers = new Set<AbortController>();
     let cancelled = false;
+
+    const markAllForResync = () => open.forEach((n) => needsResync.current.add(n));
 
     const poll = async (name: string) => {
       if (inFlight.has(name)) return;
       inFlight.add(name);
+      const controller = new AbortController();
+      controllers.add(controller);
+      const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
       try {
-        const res = await fetch(`/api/projects/${encodeURIComponent(name)}/logs?since=${lastSeq.current[name] ?? 0}`, { cache: 'no-store' });
-        if (!res.ok || cancelled) return;
+        const resync = needsResync.current.has(name);
+        const since = resync ? 0 : (lastSeq.current[name] ?? 0);
+        const res = await fetch(`/api/projects/${encodeURIComponent(name)}/logs?since=${since}`, {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        if (cancelled) return;
+        if (!res.ok) {
+          markAllForResync();
+          return;
+        }
         const fresh = (await res.json()) as LogLine[];
-        if (cancelled || fresh.length === 0) return;
-        lastSeq.current[name] = fresh[fresh.length - 1].seq;
+        if (cancelled) return;
         const lines = fresh.map((l) => ({ ...l, text: stripAnsi(l.text) }));
+        if (resync) {
+          // seq a pu repartir de 0 : on repart de zéro et on remplace le tampon (clés `${projet}:${seq}` sans collision).
+          needsResync.current.delete(name);
+          lastSeq.current[name] = fresh.length > 0 ? fresh[fresh.length - 1].seq : 0;
+          setBuffers((prev) => ({ ...prev, [name]: lines.slice(-BUFFER_SIZE) }));
+          return;
+        }
+        if (fresh.length === 0) return;
+        lastSeq.current[name] = fresh[fresh.length - 1].seq;
         setBuffers((prev) => ({ ...prev, [name]: [...(prev[name] ?? []), ...lines].slice(-BUFFER_SIZE) }));
       } catch {
-        // serveur injoignable : on réessaie au prochain tour
+        // serveur injoignable ou requête expirée : il a pu redémarrer, on resynchronise au prochain succès
+        if (!cancelled) markAllForResync();
       } finally {
+        clearTimeout(timeout);
+        controllers.delete(controller);
         inFlight.delete(name);
       }
     };
@@ -69,6 +110,7 @@ function useLogBuffers(names: string[]) {
     return () => {
       cancelled = true;
       clearInterval(timer);
+      controllers.forEach((c) => c.abort());
     };
   }, [namesKey]);
 
@@ -116,8 +158,8 @@ function LogRow({ line, color, pattern }: { line: TaggedLine; color: string; pat
   );
 }
 
-export default function LogPanel({ names, projects, onClose }: Props) {
-  const { buffers, clear } = useLogBuffers(names);
+export default function LogPanel({ names, projects, connected, onClose }: Props) {
+  const { buffers, clear } = useLogBuffers(names, connected);
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const [query, setQuery] = useState('');
   const [matchOnly, setMatchOnly] = useState(false);

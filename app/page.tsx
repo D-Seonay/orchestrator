@@ -109,7 +109,7 @@ export default function DashboardPage() {
         <p className="px-3 py-8 text-xs text-zinc-500">Connexion au serveur…</p>
       )}
 
-      {logNames.length > 0 && <LogPanel names={logNames} projects={services} onClose={() => setLogNames([])} />}
+      {logNames.length > 0 && <LogPanel names={logNames} projects={services} connected={connected} onClose={() => setLogNames([])} />}
     </div>
   );
 }
