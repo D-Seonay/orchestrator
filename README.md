@@ -1,317 +1,81 @@
-# ORCHESTRATOR
+# Orchestrator
 
-Local process manager and dashboard for Node.js applications. Spawn, monitor, and control multiple services from a single unified interface — with a real-time web UI or a lightweight terminal mode.
+Tableau de bord local pour piloter les micro-services d'un poste de dev : Orchestrator découvre les dépôts d'un dossier racine, lance chaque service avec les variables d'environnement importées depuis IntelliJ / `.env`, affiche statut, logs et version, et change de branche git sur un ou plusieurs projets en un clic.
 
-![Next.js](https://img.shields.io/badge/Next.js-16-black?style=flat-square)
-![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?style=flat-square)
-![Tailwind CSS](https://img.shields.io/badge/Tailwind-v4-38bdf8?style=flat-square)
+Next.js 16 · React 19 · TypeScript · Tailwind v4. Tout tourne en local, sans base de données.
 
----
-
-## Overview
-
-ORCHESTRATOR runs as a Next.js server on your local machine. When the server starts, it reads `apps.config.json` and spawns all configured applications. The dashboard UI connects via Server-Sent Events and receives live status updates every 2 seconds.
-
-Two launch modes:
-
-| Mode | Command | Use case |
-|---|---|---|
-| **Full dashboard** | `npm start` | Browser UI at `http://localhost:3000` |
-| **CLI lightweight** | `npm run cli` | Terminal table, no browser required |
-
----
-
-## Getting Started
+## Installation
 
 ```bash
-# Install dependencies
 npm install
-
-# Configure your applications (see Configuration section)
-# Edit apps.config.json
-
-# Build and start
-npm run build
-npm start
 ```
 
-Open `http://localhost:3000`.
+Prérequis : Windows 11, Node 22, `git` dans le `PATH`.
 
----
-
-## Configuration
-
-Edit `apps.config.json` at the project root. Each entry describes one managed process:
-
-```json
-[
-  {
-    "name": "api-server",
-    "script": "app.js",
-    "args": ["--port", "3000"],
-    "cwd": "C:/Repos/my-api",
-    "group": "backend",
-    "env": {
-      "NODE_ENV": "production"
-    }
-  },
-  {
-    "name": "front-app",
-    "script": "./node_modules/@angular/cli/bin/ng.js",
-    "args": "serve front-app",
-    "cwd": "C:/Repos/my-frontend",
-    "group": "frontend"
-  }
-]
-```
-
-### Fields
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `name` | string | ✅ | Unique identifier |
-| `script` | string | ✅ | Entry point relative to `cwd` |
-| `args` | string \| string[] | — | Arguments passed to the script |
-| `cwd` | string | — | Working directory (defaults to project root) |
-| `group` | string | — | Group name for bulk actions |
-| `env` | object | — | Environment variable overrides |
-
-### Environment files
-
-For each app, ORCHESTRATOR looks for a `.env` file in this order:
-
-1. `{cwd}/.env` — if it exists in the app's working directory
-2. `.env.{name}` — at the ORCHESTRATOR root (e.g. `.env.api-server`)
-
-These can be viewed and edited directly from the dashboard.
-
----
-
-## Dashboard Features
-
-### Process Management
-
-- **Start / Stop / Restart** each process individually
-- **Bulk group actions** — start, stop, or restart all processes in a group at once
-- **Git Pull + Restart** — pulls latest changes from the repo then restarts the process
-
-### Real-time Monitoring
-
-- **Status** — `Online`, `Building`, `Restarting`, `Stopped`, `Crashed`
-- **CPU & RAM** usage per process (polled every 5s via PowerShell)
-- **Uptime** since last start
-- **Restart counter**
-- **Git info** — current branch, dirty state (`*`), ahead/behind upstream (`⬆2 ⬇1`)
-
-### Automatic Build Detection
-
-ORCHESTRATOR detects when a process is compiling and switches to `● Building` status automatically, based on stdout patterns:
-
-| Pattern in logs | Status |
-|---|---|
-| `Building...`, `Rebuilding...`, `Compiling`, `webpack is watching` | **Building** |
-| `Compiled successfully`, `ready`, `listening on`, `server started` | **Online** |
-
-Works out of the box with Angular CLI, webpack, and most Node.js frameworks.
-
-### Circuit Breaker
-
-If a process crashes **5 times within 60 seconds**, automatic restarts are suspended and the status switches to `● Crashed`. A banner appears on the card with a **RESET** button. This prevents crash loops from consuming CPU.
-
-Manual `start` or `restart` always bypasses and resets the circuit.
-
-### Log Viewer
-
-Click **LOGS** on any project card to open a fullscreen log viewer:
-
-- ANSI escape codes are stripped automatically
-- Color-coded output: errors in red, warnings in yellow, success in green, build in cyan
-- **Filter** — search within logs in real-time
-- **Errors only** toggle
-- **Auto-scroll** — follows new output, pauses on manual scroll, resumes at bottom
-
-### .env File Editor
-
-Click **.env** on any project card to open an in-browser editor:
-
-- Shows the exact file path being edited
-- Full textarea for raw `.env` content (supports comments)
-- **Save & Restart** — writes the file and restarts the process to apply changes
-
-### Crash Notifications
-
-Browser native notifications (Notification API) fire when a process crashes unexpectedly. Requires one-time permission grant on first visit.
-
----
-
-## Views & Navigation
-
-### Grid View (default)
-
-Responsive card grid (1 → 2 → 3 columns). Each card shows full details with inline editing.
-
-### List View
-
-Compact one-line-per-project table. Toggle with **≡** in the toolbar. Useful when managing many projects.
-
-### Filter Bar
-
-```
-ALL | ONLINE | STOPPED | BUILDING | ERROR
-```
-
-Client-side instant filtering. `ERROR` shows projects with recent error lines in logs.
-
-### Search
-
-Press `/` to focus the search input. Filters by project name. Press `Esc` to clear.
-
-### Keyboard Shortcuts
-
-| Key | Action |
-|---|---|
-| `/` | Focus search |
-| `↑ / ↓` | Navigate between projects (list view) |
-| `R` | Restart focused project |
-| `S` | Stop focused project |
-| `Esc` | Clear search |
-
----
-
-## CLI Mode
-
-Runs without the Next.js server or browser. Reads `apps.config.json`, spawns all processes, and renders a live terminal table updated every 2 seconds.
+## Lancement
 
 ```bash
-npm run cli
+npm run dev                 # développement
+npm run build && npm start  # production locale
 ```
 
-```
-🚀 ORCHESTRATOR CLI  | mode léger (sans front)
-Uptime: 4m 12s
+Les deux commandes lient le serveur à `127.0.0.1` uniquement (jamais exposé sur le réseau) ; l'interface est sur <http://127.0.0.1:3000>. Aucun service n'est démarré automatiquement au lancement d'Orchestrator : on les démarre depuis l'interface.
 
-PROJECT              STATUS       UPTIME      CPU/RAM             GIT           RESTARTS
-────────────────────────────────────────────────────────────────────────────────────────────
-api-server           Online       4m 10s      0.2%/84.1MB         main                 0
-front-app            Building     3m 58s      12.4%/210.3MB       feature/ui           0
-────────────────────────────────────────────────────────────────────────────────────────────
-Commandes: start/stop/restart [name] | list | git
-```
+Autres scripts : `npm test` (Vitest), `npm run lint`.
 
-**Stdin commands:**
+## Dossier racine
 
-```bash
-restart api-server
-stop front-app
-start front-app
-```
+Orchestrator scanne les sous-dossiers directs du dossier racine. Un sous-dossier est retenu s'il contient un `.git` **et** :
 
-`Ctrl+C` shuts down all managed processes cleanly.
+- un `package.json` → **service** (démarrable) ;
+- sinon un `version.md` → **base de données** (affichée avec sa version, non démarrable).
 
----
+La racine par défaut est `C:\Repositories\AtoolDev\semaphore` ; elle se modifie depuis l'interface (ou `PUT /api/settings` avec `{ "root": "..." }`) et est conservée dans `data/state.json`. Le dossier racine est rescanné toutes les 2 s : un nouveau dépôt apparaît sans redémarrer.
 
-## API Reference
+## Commande de lancement et variables d'environnement
 
-All endpoints under `http://localhost:3000/api`.
+À la première découverte d'un service, Orchestrator importe sa configuration :
 
-### SSE stream
+**Commande de lancement**, par ordre de priorité :
 
-| Method | Route | Description |
-|---|---|---|
-| `GET` | `/api/sse` | Pushes `{ apps: AppStats[], masterUptime: string }` every 2s |
+1. la configuration d'exécution IntelliJ **sélectionnée** (`.idea/workspace.xml`) ;
+2. à défaut, la première configuration **non temporaire** ;
+3. à défaut, `npm start` si `package.json` définit un script `start`.
 
-### App management
+Sans aucune de ces trois sources, le service n'a pas de commande (à saisir à la main dans ses paramètres).
 
-| Method | Route | Body | Description |
-|---|---|---|---|
-| `GET` | `/api/apps` | — | List all app configs |
-| `POST` | `/api/apps` | `AppConfig` | Add and start a new app |
-| `PATCH` | `/api/apps/:name` | `Partial<AppConfig>` | Update config and restart |
-| `DELETE` | `/api/apps/:name` | — | Stop and remove |
-| `POST` | `/api/apps/:name/action` | `{ action }` | `start` \| `stop` \| `restart` \| `gitpull` |
-| `GET` | `/api/apps/:name/envfile` | — | Read `.env` file content |
-| `PUT` | `/api/apps/:name/envfile` | `{ content: string }` | Write `.env` file and restart |
+**Variables d'environnement** : celles de la configuration IntelliJ retenue, puis le `.env` du dépôt, qui **l'emporte** en cas de conflit. Elles sont ajoutées à l'environnement d'Orchestrator au lancement du service.
 
-### Groups
+L'import est lu **une seule fois** puis stocké dans Orchestrator : commande et variables sont modifiables par projet dans l'interface, et un « réimport » (avec choix de la configuration IntelliJ) relit les sources. **Orchestrator n'écrit jamais dans les dépôts** (`.env`, `.idea/`, etc.) ; les seules actions sur un dépôt sont celles que vous demandez explicitement : `git fetch/stash/checkout/pull` et `npm install` (voir changement de branche).
 
-| Method | Route | Body | Description |
-|---|---|---|---|
-| `POST` | `/api/groups/:group/action` | `{ action }` | `start` \| `stop` \| `restart` for all apps in group |
+## Stockage
 
----
+Tout l'état est dans le dossier `data/` (ignoré par git) :
 
-## Project Structure
+| Fichier | Contenu |
+| --- | --- |
+| `data/state.json` | dossier racine, commandes et variables importées par projet, groupes. Écrit de façon atomique (fichier temporaire puis renommage). |
+| `data/pids.json` | pid et heure de démarrage des services en cours, pour nettoyer les orphelins. |
 
-```
-ORCHESTRATOR/
-├── apps.config.json           # App definitions — edit this
-├── .env.{name}                # Per-app environment files
-│
-├── bin/
-│   └── cli.ts                 # CLI mode entry point
-│
-├── lib/
-│   ├── orchestrator.ts        # Process manager singleton (globalThis-based)
-│   └── utils.ts               # formatUptime, parseEnvFile, stripAnsi
-│
-├── types/
-│   └── index.ts               # AppConfig, AppStats, OrchestratorStatus
-│
-├── instrumentation.ts         # Next.js hook — init orchestrator on server start
-│
-├── app/
-│   ├── page.tsx               # Dashboard page (SSE consumer, filters, groups)
-│   ├── layout.tsx             # Root layout (dark theme, font-mono)
-│   └── api/
-│       ├── sse/               # GET — live status stream
-│       ├── apps/              # CRUD endpoints
-│       ├── groups/            # Group action endpoints
-│       └── validate-path/     # Live path existence check
-│
-├── components/
-│   ├── ProjectCard.tsx        # Grid view card
-│   ├── ProjectRow.tsx         # List view row
-│   ├── GroupBar.tsx           # Group header with bulk actions
-│   ├── AddProjectModal.tsx    # New project form with live validation
-│   ├── LogModal.tsx           # Fullscreen log viewer
-│   └── EnvFileModal.tsx       # .env file editor
-│
-└── tests/
-    └── lib/utils.test.ts      # Unit tests
-```
+⚠ `data/state.json` contient les **variables d'environnement en clair** (mots de passe, jetons…). Ne le commitez ni ne le partagez.
 
----
+## Crashs
 
-## Tech Stack
+Si un service s'arrête sans que vous l'ayez demandé, il est relancé automatiquement avec un délai croissant (1,5 s, 3 s, 6 s, puis 10 s au maximum). Après **5 crashs en 60 s**, la relance automatique s'arrête et le statut passe à `failed` jusqu'à un démarrage manuel. La fin des logs avant le crash est conservée dans l'interface.
 
-| | |
-|---|---|
-| **Framework** | Next.js 16 (App Router) |
-| **Language** | TypeScript 5 |
-| **Styling** | Tailwind CSS v4 |
-| **Animations** | Framer Motion |
-| **Real-time** | Server-Sent Events |
-| **Process spawning** | Node.js `child_process` |
-| **Tests** | Vitest |
-| **CLI runner** | tsx |
+## Changement de branche
 
----
+Disponible sur un projet ou sur plusieurs à la fois ; chaque projet est traité indépendamment (l'échec de l'un n'arrête pas les autres). Pour chacun :
 
-## Requirements
+1. **Arbre modifié** (fichiers suivis) : la bascule est **bloquée**, sauf si vous choisissez « Stasher et basculer ». Orchestrator ne fait jamais de stash implicite ; le stash créé n'est **pas réappliqué** (à vous de faire `git stash pop`).
+2. Si le projet tournait, il est arrêté avant la bascule.
+3. `git fetch origin --prune` (un échec hors ligne est toléré), puis `checkout` de la branche locale, ou création d'une branche de suivi si elle n'existe que sur `origin`. Branche introuvable ⇒ échec.
+4. `git pull --ff-only` (fast-forward uniquement ; hors ligne, avance sur la référence déjà récupérée).
+5. `npm install` seulement si le `package-lock.json` a changé entre les deux branches.
+6. Si le projet tournait, il est **relancé** — même si la bascule a échoué, pour ne pas laisser éteint un service qui tournait.
 
-- **Node.js** 18+
-- **Windows** — CPU/RAM monitoring uses PowerShell `Get-Process`
-- **Git** — for branch display and git pull features
+Le détail de chaque étape est écrit dans les logs du projet.
 
----
+## Arrêt
 
-## Scripts
-
-```bash
-npm run dev        # Development server (webpack, not Turbopack)
-npm run build      # Production build
-npm start          # Production server
-npm run cli        # Lightweight CLI mode (no browser)
-npm test           # Unit tests
-npm run test:watch # Tests in watch mode
-```
+Arrêter Orchestrator (Ctrl+C, fermeture de la console…) **arrête tous les services lancés**, arbre de processus complet. Si Orchestrator est tué brutalement (`taskkill /F`, plantage), il ne peut pas nettoyer : au démarrage suivant, il tente de tuer les services orphelins enregistrés dans `data/pids.json` (uniquement si le pid correspond bien au processus enregistré, pour ne jamais tuer un pid réutilisé). Ce nettoyage est au mieux : si le processus racine d'un service est déjà mort, ses descendants (le `node` final lancé via `npm start`) peuvent rester actifs et sont à arrêter à la main.
