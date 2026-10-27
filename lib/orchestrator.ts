@@ -4,7 +4,7 @@ import readline from 'readline';
 import { childEnv } from './child-env';
 import { scanRoot } from './discovery';
 import { detectLaunch, listRunConfigs } from './launch';
-import { getGitInfo, listBranches, switchBranch } from './git';
+import { applySwitch, checkSwitch, getGitInfo, listBranches, type SwitchBranchResult, type SwitchCheck } from './git';
 import { ProcessManager } from './process-manager';
 import { store } from './store';
 import type {
@@ -247,22 +247,38 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     busy.add(name);
     try {
       const log = (text: string) => pm.log(name, 'sys', text);
+      const logFailure = (o: SwitchBranchResult) => log(`✖ Bascule impossible (${o.reason}) : ${o.detail ?? ''}`);
       const settings = getState().projects[name];
-      const wasRunning = isActive(pm.status(name).status);
 
       log(`⇄ Bascule vers ${branch}`);
+      // Pré-vérification avant tout arrêt : un projet refusé (modifs, branche absente) n'est pas touché.
+      let check: SwitchCheck;
+      try {
+        check = await checkSwitch(repo.path, branch, opts);
+      } catch (err) {
+        check = { ok: false, result: { ok: false, reason: 'error', detail: (err as Error).message, lockChanged: false } };
+      }
+      if (!check.ok) {
+        logFailure(check.result);
+        await refreshGit([name]);
+        const { reason, detail } = check.result;
+        return { name, ok: false, reason, detail, installed: false, restarted: false };
+      }
+
+      const wasRunning = isActive(pm.status(name).status);
       if (wasRunning) {
         log('■ Arrêt avant la bascule');
         await pm.stop(name);
       }
 
-      let outcome: Awaited<ReturnType<typeof switchBranch>>;
+      let outcome: SwitchBranchResult;
       try {
-        outcome = await switchBranch(repo.path, branch, opts);
+        outcome = await applySwitch(repo.path, check.plan, opts);
       } catch (err) {
         outcome = { ok: false, reason: 'error', detail: (err as Error).message, lockChanged: false };
       }
-      log(outcome.ok ? `✔ Sur la branche ${branch}` : `✖ Bascule impossible (${outcome.reason}) : ${outcome.detail ?? ''}`);
+      if (outcome.ok) log(`✔ Sur la branche ${branch}`);
+      else logFailure(outcome);
 
       let installed = false;
       let detail = outcome.detail;
@@ -273,7 +289,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
         if (!installed) detail = [detail, 'npm install a échoué'].filter(Boolean).join(' — ');
       }
 
-      // Relance même si la bascule a échoué : on ne laisse pas éteint un service qui tournait.
+      // Relance même si l'application a échoué : on ne laisse pas éteint un service qui tournait.
       let restarted = false;
       if (wasRunning && settings?.launch) {
         log('▶ Relance');

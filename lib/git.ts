@@ -82,51 +82,81 @@ export interface SwitchBranchResult {
   lockChanged: boolean;
 }
 
-export async function switchBranch(
-  cwd: string,
-  branch: string,
-  opts: { stash: boolean },
-): Promise<SwitchBranchResult> {
-  const notes: string[] = [];
-  const fail = (reason: NonNullable<SwitchBranchResult['reason']>, detail: string, lockChanged = false): SwitchBranchResult => ({
-    ok: false,
-    reason,
-    detail: [detail, ...notes].filter(Boolean).join(' — '),
-    lockChanged,
-  });
+/** Résultat d'une pré-vérification réussie : de quoi appliquer la bascule sans refaire les contrôles réseau. */
+export interface SwitchPlan {
+  branch: string;
+  isLocal: boolean;
+  fetched: boolean;
+  notes: string[];
+}
 
-  // 1. Arbre sale : refus, ou mise de côté explicite (jamais réappliquée).
-  const dirty = await countDirtyFiles(cwd);
-  if (dirty > 0) {
-    if (!opts.stash) return fail('dirty', `${dirty} fichiers modifiés`);
-    const stashed = await git(cwd, ['stash', 'push', '-m', `orchestrator: avant bascule vers ${branch}`]);
-    if (!stashed.ok) return fail('error', `stash impossible : ${stashed.stderr}`);
+export type SwitchCheck = { ok: true; plan: SwitchPlan } | { ok: false; result: SwitchBranchResult };
+
+const failure = (
+  reason: NonNullable<SwitchBranchResult['reason']>,
+  detail: string,
+  notes: string[],
+  lockChanged = false,
+): SwitchBranchResult => ({ ok: false, reason, detail: [detail, ...notes].filter(Boolean).join(' — '), lockChanged });
+
+/**
+ * Pré-vérification sans effet sur l'arbre de travail : refus si modifs non commitées (sans stash demandé),
+ * fetch (un échec, hors ligne, est toléré), puis la branche doit exister en local ou sur origin.
+ */
+export async function checkSwitch(cwd: string, branch: string, opts: { stash: boolean }): Promise<SwitchCheck> {
+  const notes: string[] = [];
+
+  // 1. Arbre sale : refus, sauf mise de côté explicite (faite à l'application).
+  if (!opts.stash) {
+    const dirty = await countDirtyFiles(cwd);
+    if (dirty > 0) return { ok: false, result: failure('dirty', `${dirty} fichiers modifiés`, notes) };
   }
 
-  // 2. Fetch : un échec (hors ligne) est toléré.
+  // 2. Fetch.
   const fetched = await git(cwd, ['fetch', 'origin', '--prune']);
   if (!fetched.ok) notes.push('fetch origin impossible (hors ligne ?)');
 
   // 3. La branche doit exister en local ou sur origin.
   const isLocal = (await git(cwd, ['show-ref', '--verify', '--quiet', `${LOCAL_PREFIX}${branch}`])).ok;
   const isRemote = (await git(cwd, ['show-ref', '--verify', '--quiet', `${REMOTE_PREFIX}${branch}`])).ok;
-  if (!isLocal && !isRemote) return fail('branch-not-found', `branche ${branch} introuvable`);
+  if (!isLocal && !isRemote) return { ok: false, result: failure('branch-not-found', `branche ${branch} introuvable`, notes) };
 
-  // 4-5. Bascule, en mémorisant le blob de package-lock.json avant.
+  return { ok: true, plan: { branch, isLocal, fetched: fetched.ok, notes } };
+}
+
+/** Application d'une bascule pré-vérifiée : stash éventuel (jamais réappliqué), checkout, pull --ff-only, comparaison du lock. */
+export async function applySwitch(cwd: string, plan: SwitchPlan, opts: { stash: boolean }): Promise<SwitchBranchResult> {
+  const { branch, isLocal, notes } = plan;
+
+  // 4. L'arbre a pu changer depuis la pré-vérification : on recontrôle avant d'y toucher.
+  const dirty = await countDirtyFiles(cwd);
+  if (dirty > 0) {
+    if (!opts.stash) return failure('dirty', `${dirty} fichiers modifiés`, notes);
+    const stashed = await git(cwd, ['stash', 'push', '-m', `orchestrator: avant bascule vers ${branch}`]);
+    if (!stashed.ok) return failure('error', `stash impossible : ${stashed.stderr}`, notes);
+  }
+
+  // 5-6. Bascule, en mémorisant le blob de package-lock.json avant.
   const lockBefore = await lockBlob(cwd);
   const checkout = isLocal
     ? await git(cwd, ['checkout', branch])
     : await git(cwd, ['checkout', '-b', branch, '--track', `origin/${branch}`]);
-  if (!checkout.ok) return fail('error', checkout.stderr);
+  if (!checkout.ok) return failure('error', checkout.stderr, notes);
 
   const lockChanged = async () => lockBefore !== (await lockBlob(cwd));
 
-  // 6. Mise à jour en fast-forward uniquement. Hors ligne, on avance sur la référence déjà récupérée.
+  // 7. Mise à jour en fast-forward uniquement. Hors ligne, on avance sur la référence déjà récupérée.
   if (await hasUpstream(cwd)) {
-    const update = fetched.ok ? await git(cwd, ['pull', '--ff-only']) : await git(cwd, ['merge', '--ff-only', '@{u}']);
-    if (!update.ok) return fail('not-fast-forward', `basculé sur ${branch} mais pas à jour`, await lockChanged());
+    const update = plan.fetched ? await git(cwd, ['pull', '--ff-only']) : await git(cwd, ['merge', '--ff-only', '@{u}']);
+    if (!update.ok) return failure('not-fast-forward', `basculé sur ${branch} mais pas à jour`, notes, await lockChanged());
   }
 
-  // 7.
+  // 8.
   return { ok: true, detail: notes.join(' — ') || undefined, lockChanged: await lockChanged() };
+}
+
+/** Pré-vérification puis application. */
+export async function switchBranch(cwd: string, branch: string, opts: { stash: boolean }): Promise<SwitchBranchResult> {
+  const check = await checkSwitch(cwd, branch, opts);
+  return check.ok ? applySwitch(cwd, check.plan, opts) : check.result;
 }

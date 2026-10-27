@@ -233,16 +233,34 @@ describe('orchestrator', () => {
     expect(pm.status('svc-a').status).toBe('stopped');
   }, T);
 
-  it('switchBranches restarts a running project even when the switch fails', async () => {
+  it('switchBranches leaves a running project untouched when the branch does not exist', async () => {
     addService('svc-a');
     orch.refresh();
     orch.updateSettings('svc-a', { command: LONG });
     await orch.act(['svc-a'], 'start');
+    const pid = view('svc-a')!.pid;
 
     const [result] = await orch.switchBranches(['svc-a'], 'nope', { stash: false });
 
-    expect(result).toMatchObject({ ok: false, reason: 'branch-not-found', restarted: true });
+    expect(result).toMatchObject({ ok: false, reason: 'branch-not-found', restarted: false });
     expect(view('svc-a')!.status).toBe('running');
+    expect(view('svc-a')!.pid).toBe(pid);
+    expect(orch.logs('svc-a', 0).some((l) => l.text.includes('Arrêt'))).toBe(false);
+  }, T);
+
+  it('switchBranches leaves a running dirty project untouched', async () => {
+    const dir = addService('svc-a');
+    orch.refresh();
+    orch.updateSettings('svc-a', { command: LONG });
+    await orch.act(['svc-a'], 'start');
+    const pid = view('svc-a')!.pid;
+    writeFile(dir, 'a.txt', 'changed\n');
+
+    const [result] = await orch.switchBranches(['svc-a'], 'staging', { stash: false });
+
+    expect(result).toMatchObject({ ok: false, reason: 'dirty', restarted: false });
+    expect(view('svc-a')!.pid).toBe(pid);
+    expect(git(dir, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('main');
   }, T);
 
   it('switchBranches rejects a project already busy', async () => {

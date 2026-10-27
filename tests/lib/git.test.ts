@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { getGitInfo, listBranches, switchBranch } from '@/lib/git';
+import { applySwitch, checkSwitch, getGitInfo, listBranches, switchBranch } from '@/lib/git';
 import { cloneRepo, commitFile, createRepoPair, git, push, writeFile, type RepoPair } from '../helpers/repos';
 
 describe('git', () => {
@@ -115,11 +115,29 @@ describe('git', () => {
       expect((await getGitInfo(pair.work))?.branch).toBe('main');
     }, 30_000);
 
-    it('keeps the stash when the branch is not found', async () => {
+    it('does not stash when the branch is not found (pre-check before stashing)', async () => {
       writeFile(pair.work, 'a.txt', 'changed\n');
       const result = await switchBranch(pair.work, 'nope', { stash: true });
       expect(result).toMatchObject({ ok: false, reason: 'branch-not-found' });
-      expect(await getGitInfo(pair.work)).toMatchObject({ dirtyFiles: 0, stashCount: 1 });
+      expect(await getGitInfo(pair.work)).toMatchObject({ branch: 'main', dirtyFiles: 1, stashCount: 0 });
+      expect(fs.readFileSync(path.join(pair.work, 'a.txt'), 'utf8')).toBe('changed\n');
+    }, 30_000);
+
+    it('checkSwitch touches nothing, even with stash on a dirty tree', async () => {
+      writeFile(pair.work, 'a.txt', 'changed\n');
+      const check = await checkSwitch(pair.work, 'staging', { stash: true });
+      expect(check).toMatchObject({ ok: true, plan: { branch: 'staging', isLocal: true, fetched: true } });
+      expect(await getGitInfo(pair.work)).toMatchObject({ branch: 'main', dirtyFiles: 1, stashCount: 0 });
+
+      expect(await checkSwitch(pair.work, 'staging', { stash: false })).toMatchObject({ ok: false, result: { reason: 'dirty' } });
+    }, 30_000);
+
+    it('applySwitch re-checks a tree that became dirty after the pre-check', async () => {
+      const check = await checkSwitch(pair.work, 'staging', { stash: false });
+      if (!check.ok) throw new Error('pre-check failed');
+      writeFile(pair.work, 'a.txt', 'changed\n');
+      expect(await applySwitch(pair.work, check.plan, { stash: false })).toMatchObject({ ok: false, reason: 'dirty' });
+      expect((await getGitInfo(pair.work))?.branch).toBe('main');
     }, 30_000);
 
     it('reports not-fast-forward when local branch diverged', async () => {
