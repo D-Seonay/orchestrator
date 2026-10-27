@@ -124,7 +124,7 @@ export interface DashboardPayload { root: string; rootExists: boolean; dbVersion
 
 **Interfaces:**
 - Produces `lib/intellij.ts` : `export function parseRunConfigs(xml: string, projectDir: string): { selected: string | null; configs: RunConfig[] }`
-- Produces `lib/launch.ts` : `export function detectLaunch(repoPath: string): { launch: LaunchSpec | null; env: Record<string, string> }`
+- Produces `lib/launch.ts` : `export function detectLaunch(repoPath: string, configKey?: string): { launch: LaunchSpec | null; env: Record<string, string> }` et `export function listRunConfigs(repoPath: string): RunConfig[]` (configs supportées, `[]` si pas de workspace.xml)
 - Consumes : `parseEnv` de `lib/utils.ts`.
 
 Règles de `parseRunConfigs` (format réel observé dans les dépôts Semaphore) :
@@ -137,7 +137,7 @@ Règles de `parseRunConfigs` (format réel observé dans les dépôts Semaphore)
 
 Règles de `detectLaunch` :
 - Lit `<repo>/.idea/workspace.xml` s'il existe (toute erreur de lecture/parsing ⇒ comme absent).
-- Choix : config dont `key === selected` ; sinon la première non temporaire ; sinon la première. → `source:'intellij'`, `configName`.
+- Choix : config dont `key === configKey` si fourni ; sinon dont `key === selected` ; sinon la première non temporaire ; sinon la première. → `source:'intellij'`, `configName`.
 - Aucune config supportée ⇒ si `package.json` a `scripts.start` ⇒ `{ command: 'npm start', cwd: repoPath, source: 'package.json' }` ; sinon `launch: null`.
 - `env` = env de la config choisie, puis écrasé par `<repo>/.env` s'il existe.
 - Lecture seule : aucun fichier écrit.
@@ -151,6 +151,7 @@ Règles de `detectLaunch` :
   - `ignores docker and karma configurations`
 - [ ] **Step 2: Failing tests** `launch.test.ts` (dépôts factices en tmpdir) :
   - `uses the selected IntelliJ config` (deux configs, `selected="Node.js.test"`) → `configName: 'test'`
+  - `configKey overrides the selected config` (`detectLaunch(repo, 'Node.js.app.js')` → `configName: 'app.js'`)
   - `falls back to first non-temporary config when nothing selected`
   - `falls back to npm start when only docker configs exist` *(Review Focus 2)*
   - `falls back to npm start when workspace.xml is malformed` *(Review Focus 2)*
@@ -240,7 +241,7 @@ Comportement :
   - `killAll kills every running child synchronously`
   - `cleanupOrphans kills pids left in pidFile` (spawner un `node -e setInterval` détaché, écrire son pid dans le fichier, appeler, vérifier `process.kill(pid, 0)` lève)
 - [ ] **Step 2:** `npx vitest run tests/lib/process-manager.test.ts` → FAIL
-- [ ] **Step 3:** Implémenter (reprendre la logique `taskkill` et le parsing de lignes `readline` de l'ancien `lib/orchestrator.ts`, visible via `git show HEAD~5:lib/orchestrator.ts`).
+- [ ] **Step 3:** Implémenter (reprendre la logique `taskkill` et le parsing de lignes `readline` de l'ancien `lib/orchestrator.ts`, visible via `git show origin/master:lib/orchestrator.ts`).
 - [ ] **Step 4:** → PASS (timeout de test 15 s)
 - [ ] **Step 5:** `git commit -m "feat: gestionnaire de process avec logs et politique de crash"`
 
@@ -266,7 +267,8 @@ export function createOrchestrator(deps: OrchestratorDeps): {
   act(names: string[], action: 'start' | 'stop' | 'restart'): Promise<void>; // ignore database, launch null et busy
   getSettings(name: string): ProjectSettings | null;
   updateSettings(name: string, patch: { command?: string; env?: Record<string, string> }): void; // command ⇒ source 'manual' ; ne redémarre pas
-  reimport(name: string): ProjectSettings;  // relance detectLaunch, remplace launch + env
+  reimport(name: string, configKey?: string): ProjectSettings;  // relance detectLaunch, remplace launch + env
+  runConfigs(name: string): RunConfig[];   // listRunConfigs du dépôt (pour le choix dans l'UI)
   logs(name: string, since: number): LogLine[];
   branches(names: string[]): Promise<string[]>;  // union
   switchBranches(names: string[], branch: string, opts: { stash: boolean }): Promise<SwitchResult[]>;
@@ -283,7 +285,7 @@ Routes (corps JSON, erreurs `{ error }` + 400/404) :
 - `GET /api/sse` → `DashboardPayload` toutes les 2 s (reprendre le squelette de l'ancien `app/api/sse/route.ts`)
 - `POST /api/projects/action` `{ names, action }`
 - `GET|PUT /api/projects/[name]/settings` (`PUT { command?, env? }`)
-- `POST /api/projects/[name]/reimport`
+- `POST /api/projects/[name]/reimport` `{ configKey? }` ; `GET /api/projects/[name]/reimport` → `RunConfig[]` (clés + noms + commandes, **sans** les valeurs d'env)
 - `GET /api/projects/[name]/logs?since=N` → `LogLine[]`
 - `GET /api/branches?names=a,b` → `string[]`
 - `POST /api/branches/switch` `{ names, branch, stash }` → `SwitchResult[]`
@@ -353,7 +355,8 @@ Contenu :
 - Commande (texte), dossier d'exécution (lecture seule), origine (`IntelliJ : <configName>` / `package.json` / `manuel`).
 - Tableau clé/valeur des variables : ajout, suppression, édition ; valeurs dont la clé contient `PASSWORD|SECRET|KEY|TOKEN` masquées par défaut (œil pour afficher).
 - « Enregistrer » → `PUT settings` ; message « Redémarrer pour appliquer » + bouton redémarrer si le projet tourne.
-- « Réimporter depuis IntelliJ/.env » avec confirmation (« remplace la commande et les variables actuelles »).
+- Liste déroulante des configs IntelliJ du projet (`GET reimport`) pour en choisir une autre que celle sélectionnée.
+- « Réimporter depuis IntelliJ/.env » (avec la config choisie) avec confirmation (« remplace la commande et les variables actuelles »).
 - Mention fixe : « Stocké dans Orchestrator — vos dépôts ne sont pas modifiés. »
 
 - [ ] **Step 1:** Implémenter.
@@ -382,7 +385,7 @@ Contenu :
 
 ### Task 11: README et vérification finale
 
-**Files:** Modify `README.md` (réécrit : but, `npm install`, `npm run dev` / `npm run build && npm start`, dossier racine, import IntelliJ/.env, stockage `data/`, comportement des crashs et du changement de branche) ; supprimer `CLAUDE.md`/`AGENTS.md` ? **Non** — les garder.
+**Files:** Modify `README.md` (réécrit : but, `npm install`, `npm run dev` / `npm run build && npm start`, dossier racine, import IntelliJ/.env, stockage `data/`, comportement des crashs et du changement de branche) . `CLAUDE.md` et `AGENTS.md` sont conservés.
 
 - [ ] **Step 1:** Réécrire le README.
 - [ ] **Step 2:** `npx vitest run` → PASS ; `npm run lint` ; `npm run build` → OK.
