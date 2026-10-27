@@ -14,6 +14,7 @@ interface Props {
   onAction: (names: string[], action: RowAction) => void;
   onOpenLogs: (names: string[]) => void;
   onOpenConfig: (name: string) => void;
+  onSwitchBranch: (names: string[]) => void;
 }
 
 const STATUS: Record<RunStatus, { label: string; dot: string; text: string }> = {
@@ -74,6 +75,7 @@ function ProjectRow({
   onAction,
   onOpenLogs,
   onOpenConfig,
+  onSwitchBranch,
 }: {
   project: ProjectView;
   checked: boolean;
@@ -81,6 +83,7 @@ function ProjectRow({
   onAction: (action: RowAction) => void;
   onOpenLogs: () => void;
   onOpenConfig: () => void;
+  onSwitchBranch: () => void;
 }) {
   const { name, status, git, launch, busy } = project;
   const st = STATUS[status];
@@ -189,6 +192,15 @@ function ProjectRow({
           <button onClick={onOpenConfig} className={`${BTN} enabled:hover:border-zinc-400`} aria-label={`Configuration de ${name}`}>
             config
           </button>
+          <button
+            onClick={onSwitchBranch}
+            disabled={!git || busy}
+            title={git ? 'Changer de branche' : 'Pas un dépôt git'}
+            aria-label={`Changer la branche de ${name}`}
+            className={`${BTN} enabled:hover:border-zinc-400`}
+          >
+            ⎇
+          </button>
         </span>
       </div>
       <CrashBanner project={project} />
@@ -196,7 +208,7 @@ function ProjectRow({
   );
 }
 
-export default function ProjectTable({ projects, selected, onToggle, onToggleAll, onAction, onOpenLogs, onOpenConfig }: Props) {
+export default function ProjectTable({ projects, selected, onToggle, onToggleAll, onAction, onOpenLogs, onOpenConfig, onSwitchBranch }: Props) {
   const names = projects.map((p) => p.name);
   const selectedCount = names.filter((n) => selected.has(n)).length;
   const allChecked = names.length > 0 && selectedCount === names.length;
@@ -236,6 +248,7 @@ export default function ProjectTable({ projects, selected, onToggle, onToggleAll
             onAction={(action) => onAction([p.name], action)}
             onOpenLogs={() => onOpenLogs([p.name])}
             onOpenConfig={() => onOpenConfig(p.name)}
+            onSwitchBranch={() => onSwitchBranch([p.name])}
           />
         ))}
       </div>

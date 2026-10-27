@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import ProjectTable, { type RowAction } from '@/components/ProjectTable';
+import BranchDialog from '@/components/BranchDialog';
 import ConfigDrawer from '@/components/ConfigDrawer';
 import LogPanel from '@/components/LogPanel';
 import Toolbar from '@/components/Toolbar';
@@ -13,6 +14,7 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [logNames, setLogNames] = useState<string[]>([]);
   const [configName, setConfigName] = useState<string | null>(null);
+  const [branchNames, setBranchNames] = useState<string[] | null>(null);
 
   const services = useMemo(() => data?.projects.filter((p) => p.kind === 'service') ?? [], [data]);
   const database = data?.projects.find((p) => p.kind === 'database') ?? null;
@@ -50,9 +52,6 @@ export default function DashboardPage() {
   // Ouvrir des logs complète le panneau déjà ouvert (ordre d'ouverture conservé).
   const openLogs = (names: string[]) => setLogNames((prev) => [...prev, ...names.filter((n) => !prev.includes(n))]);
 
-  // Task 10 : dialogue de changement de branche.
-  const switchBranch = (names: string[]) => void names;
-
   return (
     <div className={`min-h-screen flex flex-col ${logNames.length > 0 ? 'pb-[40vh]' : ''}`}>
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 px-3 py-3">
@@ -65,6 +64,15 @@ export default function DashboardPage() {
             <span className="text-zinc-400" title="Base de données gérée à part (non lançable)">
               Base : <span className="text-zinc-100">{data.dbVersion ?? 'version inconnue'}</span>
               {database?.git && <span className="text-yellow-400"> ({database.git.branch})</span>}
+              {database?.git && (
+                <button
+                  onClick={() => setBranchNames([database.name])}
+                  disabled={database.busy}
+                  className="ml-2 px-1.5 h-5 border border-zinc-700 text-zinc-300 transition-colors enabled:hover:border-zinc-400 enabled:hover:text-white disabled:opacity-30"
+                >
+                  Changer de branche
+                </button>
+              )}
             </span>
           )}
           <span className="flex items-center gap-2">
@@ -95,7 +103,7 @@ export default function DashboardPage() {
             request={request}
             onSelectGroup={(members) => setSelection(new Set(members))}
             onAction={act}
-            onSwitchBranch={switchBranch}
+            onSwitchBranch={setBranchNames}
             onOpenLogs={openLogs}
           />
           <ProjectTable
@@ -106,6 +114,7 @@ export default function DashboardPage() {
             onAction={act}
             onOpenLogs={openLogs}
             onOpenConfig={setConfigName}
+            onSwitchBranch={setBranchNames}
           />
         </>
       ) : (
@@ -113,6 +122,8 @@ export default function DashboardPage() {
       )}
 
       {configProject && <ConfigDrawer key={configProject.name} project={configProject} onClose={() => setConfigName(null)} />}
+
+      {branchNames && data && <BranchDialog names={branchNames} projects={data.projects} onClose={() => setBranchNames(null)} />}
 
       {logNames.length > 0 && <LogPanel names={logNames} projects={services} connected={connected} onClose={() => setLogNames([])} />}
     </div>
