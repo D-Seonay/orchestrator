@@ -16,7 +16,7 @@ const isDropped = (key: string) => DROPPED.has(key.toUpperCase()) || DROPPED_PRE
  * Environnement d'Orchestrator sans les variables propres à Next, complété par `extra`
  * (les variables du projet, qui l'emportent — y compris NODE_ENV, PORT ou NODE_OPTIONS si le projet les définit).
  */
-export function childEnv(extra: Record<string, string> = {}): Record<string, string> {
+function build(extra: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined && !isDropped(key)) env[key] = value;
@@ -33,17 +33,20 @@ export function childEnv(extra: Record<string, string> = {}): Record<string, str
   return env;
 }
 
+// Le type ProcessEnv de Next exige NODE_ENV, que l'on retire justement : d'où les conversions.
+export const childEnv = (extra: Record<string, string> = {}): NodeJS.ProcessEnv => build(extra) as NodeJS.ProcessEnv;
+
 /**
  * Environnement du watchdog d'un service : celui du service, mais son NODE_OPTIONS voyage dans
  * CHILD_NODE_OPTIONS (le watchdog est lui-même un process node et ne doit pas en hériter).
  */
-export function watchdogEnv(extra: Record<string, string>): Record<string, string> {
-  const env = childEnv(extra);
+export function watchdogEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
+  const env = build(extra);
   for (const key of Object.keys(env)) {
     if (key.toUpperCase() === 'NODE_OPTIONS') {
       env[CHILD_NODE_OPTIONS] = env[key];
       delete env[key];
     }
   }
-  return env;
+  return env as NodeJS.ProcessEnv;
 }
