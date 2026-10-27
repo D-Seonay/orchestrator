@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
-import { createOrchestrator } from '@/lib/orchestrator';
+import { createOrchestrator, projectKey } from '@/lib/orchestrator';
 import { ProcessManager } from '@/lib/process-manager';
 import type { StoredState } from '@/lib/types';
 import { cloneRepo, commitFile, createRepoPair, git, push, writeFile, type RepoPair } from '../helpers/repos';
@@ -70,7 +70,7 @@ describe('orchestrator', () => {
     expect(first.env).toEqual({ A: '1' });
     expect(first.launch).toBeNull();
     expect(new Date(first.importedAt).toISOString()).toBe(first.importedAt);
-    expect(saved.projects['svc-a']).toEqual(first);
+    expect(saved.projects[projectKey(dir)]).toEqual(first);
 
     writeFile(dir, '.env', 'A=2\n');
     orch.refresh();
@@ -78,7 +78,7 @@ describe('orchestrator', () => {
 
     expect(orch.reimport('svc-a').env).toEqual({ A: '2' });
     expect(orch.getSettings('svc-a')!.env).toEqual({ A: '2' });
-    expect(saved.projects['svc-a'].env).toEqual({ A: '2' });
+    expect(saved.projects[projectKey(dir)].env).toEqual({ A: '2' });
   });
 
   it('new folder cloned later appears on next refresh', () => {
@@ -101,7 +101,12 @@ describe('orchestrator', () => {
     orch.refresh();
 
     expect(orch.dashboard().projects.map((p) => p.name)).toEqual(['svc-a']);
-    expect(orch.getSettings('svc-b')).not.toBeNull();
+    expect(saved.projects[projectKey(b)]).toBeDefined();
+
+    // Le dossier revient (re-clone) : ses réglages sont repris, pas réimportés.
+    addService('svc-b');
+    orch.refresh();
+    expect(orch.getSettings('svc-b')).toEqual(saved.projects[projectKey(b)]);
   });
 
   it('keeps a removed folder visible as missing while it still runs', async () => {
@@ -169,7 +174,7 @@ describe('orchestrator', () => {
     orch.updateSettings('svc-a', { env: { B: '2' } });
     expect(orch.getSettings('svc-a')!.env).toEqual({ B: '2' });
     expect(orch.getSettings('svc-a')!.launch!.command).toBe('node server.js');
-    expect(saved.projects['svc-a'].launch!.source).toBe('manual');
+    expect(saved.projects[projectKey(dir)].launch!.source).toBe('manual');
   });
 
   it('act start, restart and stop drive the process', async () => {
@@ -330,9 +335,93 @@ describe('orchestrator', () => {
       expect(errors).toHaveBeenCalledOnce();
       // Le tick suivant réessaie et réussit : le serveur continue de fonctionner.
       expect(() => flaky.safeRefresh()).not.toThrow();
-      expect(saved.projects['svc-a']).toBeDefined();
+      expect(saved.projects[projectKey(path.join(root, 'svc-a'))]).toBeDefined();
     } finally {
       errors.mockRestore();
     }
+  }, T);
+
+  it('does not reuse settings across a root change to a same-named repo', async () => {
+    const first = addService('svc-a');
+    writeFile(first, '.env', 'A=1\n');
+    orch.refresh();
+    orch.updateSettings('svc-a', { command: LONG });
+
+    const root2 = path.join(pair.base, 'root2');
+    fs.mkdirSync(root2);
+    const second = cloneRepo(pair.origin, path.join(root2, 'svc-a'));
+    writeFile(second, 'package.json', JSON.stringify({ name: 'svc-a', version: '9.9.9' }));
+    writeFile(second, '.env', 'A=2\n');
+    orch.setRoot(root2);
+
+    expect(orch.getSettings('svc-a')).toMatchObject({ env: { A: '2' }, launch: null });
+    expect(view('svc-a')!.path).toBe(second);
+    // Aucune commande pour le nouveau dossier : rien n'est lancé (surtout pas le code de l'autre racine).
+    await orch.act(['svc-a'], 'start');
+    expect(pm.status('svc-a').status).toBe('stopped');
+
+    orch.setRoot(root);
+    expect(orch.getSettings('svc-a')).toMatchObject({ env: { A: '1' }, launch: { command: LONG, cwd: first } });
+    expect(Object.keys(saved.projects).sort()).toEqual([projectKey(first), projectKey(second)].sort());
+  }, T);
+
+  it('act start/restart skip names that are not in the current root', async () => {
+    const dir = addService('svc-a');
+    orch.refresh();
+    orch.updateSettings('svc-a', { command: LONG });
+    fs.mkdirSync(path.join(pair.base, 'elsewhere'));
+    orch.setRoot(path.join(pair.base, 'elsewhere'));
+
+    await orch.act(['svc-a'], 'start');
+    await orch.act(['svc-a'], 'restart');
+
+    expect(pm.status('svc-a').status).toBe('stopped');
+    expect(saved.projects[projectKey(dir)].launch!.command).toBe(LONG);
+  }, T);
+
+  it('migrates folder-name keys of an old state to path keys', () => {
+    const dir = addService('svc-a');
+    writeFile(dir, '.env', 'FROM_DOTENV=1\n');
+    const old = { launch: { command: LONG, cwd: dir, source: 'manual' as const }, env: { KEPT: '1' }, importedAt: '2026-01-01T00:00:00.000Z' };
+    saved = { root, projects: { 'svc-a': old, 'gone-svc': { ...old, launch: null } }, groups: { g: ['svc-a'] } };
+
+    orch.refresh();
+
+    // Les réglages migrés sont repris tels quels (pas de réimport) et écrits sous la nouvelle clé.
+    expect(orch.getSettings('svc-a')).toEqual(old);
+    expect(Object.keys(saved.projects).sort()).toEqual(
+      [projectKey(dir), projectKey(path.join(root, 'gone-svc'))].sort(),
+    );
+    expect(saved.groups).toEqual({ g: ['svc-a'] });
+  });
+
+  it('act restart is skipped while a branch switch holds the project', async () => {
+    addService('svc-a');
+    orch.refresh();
+    orch.updateSettings('svc-a', { command: LONG });
+    await orch.act(['svc-a'], 'start');
+
+    const switching = orch.switchBranches(['svc-a'], 'staging', { stash: false });
+    await orch.act(['svc-a'], 'restart');
+    const [result] = await switching;
+
+    expect(result).toMatchObject({ ok: true, restarted: true });
+    expect(pm.status('svc-a')).toMatchObject({ status: 'running', restarts: 0 });
+  }, T);
+
+  it('a branch switch is refused while act holds the project', async () => {
+    addService('svc-a');
+    orch.refresh();
+    orch.updateSettings('svc-a', { command: LONG });
+    await orch.act(['svc-a'], 'start');
+
+    const restarting = orch.act(['svc-a'], 'restart');
+    expect(view('svc-a')!.busy).toBe(true);
+    const [result] = await orch.switchBranches(['svc-a'], 'staging', { stash: false });
+    await restarting;
+
+    expect(result).toEqual({ name: 'svc-a', ok: false, reason: 'busy' });
+    expect(pm.status('svc-a')).toMatchObject({ status: 'running', restarts: 1 });
+    expect(view('svc-a')!.busy).toBe(false);
   }, T);
 });

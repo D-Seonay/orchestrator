@@ -11,6 +11,7 @@ import type {
   DashboardPayload,
   DiscoveredRepo,
   GitInfo,
+  LaunchSpec,
   LogLine,
   ProjectSettings,
   ProjectView,
@@ -29,6 +30,28 @@ export interface OrchestratorDeps {
 }
 
 const isActive = (status: RunStatus) => status === 'running' || status === 'restarting';
+
+/**
+ * Clé des réglages d'un dépôt : son chemin absolu normalisé (insensible à la casse sous Windows).
+ * Deux racines contenant un dossier du même nom ne partagent donc pas leurs réglages.
+ */
+export function projectKey(dir: string): string {
+  const resolved = path.resolve(dir);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+/** Ancien format (clé = nom du dossier) : la clé devient le chemin du dossier dans la racine. Renvoie true si l'état a changé. */
+export function migrateProjectKeys(state: StoredState): boolean {
+  let changed = false;
+  for (const [key, settings] of Object.entries(state.projects)) {
+    if (path.isAbsolute(key)) continue;
+    const migrated = projectKey(path.join(state.root, key));
+    if (!(migrated in state.projects)) state.projects[migrated] = settings;
+    delete state.projects[key];
+    changed = true;
+  }
+  return changed;
+}
 
 /** `npm install` dans le dépôt, sortie diffusée dans les logs du projet. Résout à true si le code de sortie est 0. */
 function runInstall(pm: ProcessManager, name: string, cwd: string): Promise<boolean> {
@@ -60,12 +83,20 @@ export function createOrchestrator(deps: OrchestratorDeps) {
   let repos = new Map<string, DiscoveredRepo>();
   const gitCache = new Map<string, GitInfo | null>();
   const busy = new Set<string>();
+  // Clé des réglages de chaque service lancé, pour garder visible (et arrêtable) un service dont le dossier a disparu.
+  const launched = new Map<string, string>();
   let started = false;
   let gitRefreshing = false;
   // Import non encore écrit sur disque (save a échoué) : retenté au prochain refresh.
   let unsaved = false;
 
-  const getState = (): StoredState => (state ??= deps.store.load());
+  function getState(): StoredState {
+    if (!state) {
+      state = deps.store.load();
+      if (migrateProjectKeys(state)) unsaved = true; // écrit au prochain refresh
+    }
+    return state;
+  }
   const persist = () => deps.store.save(getState());
 
   async function refreshGit(names: string[]): Promise<void> {
@@ -82,12 +113,15 @@ export function createOrchestrator(deps: OrchestratorDeps) {
   function refresh(): void {
     const scan = scanRoot(getState().root);
     rootExists = scan.rootExists;
+    // Même nom mais autre dossier (racine changée) : l'info git en cache n'est plus la sienne.
+    for (const repo of scan.repos) if (repos.get(repo.name)?.path !== repo.path) gitCache.delete(repo.name);
     repos = new Map(scan.repos.map((r) => [r.name, r]));
 
     for (const repo of scan.repos) {
-      if (repo.kind !== 'service' || getState().projects[repo.name]) continue;
+      const key = projectKey(repo.path);
+      if (repo.kind !== 'service' || getState().projects[key]) continue;
       const { launch, env } = detectLaunch(repo.path);
-      getState().projects[repo.name] = { launch, env, importedAt: new Date().toISOString() };
+      getState().projects[key] = { launch, env, importedAt: new Date().toISOString() };
       unsaved = true;
     }
     if (unsaved) {
@@ -150,7 +184,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
         kind: repo.kind,
         path: repo.path,
         version: repo.version,
-        launch: getState().projects[repo.name]?.launch ?? null,
+        launch: settingsOf(repo.name)?.launch ?? null,
         git: gitCache.get(repo.name) ?? null,
         missing: false,
         busy: busy.has(repo.name),
@@ -158,10 +192,14 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       });
     }
     // Dossier disparu mais service encore lancé : on le garde visible pour pouvoir l'arrêter.
-    for (const [name, settings] of Object.entries(getState().projects)) {
+    for (const [name, key] of launched) {
       if (repos.has(name)) continue;
       const status = pm.status(name);
-      if (!isActive(status.status)) continue;
+      const settings = getState().projects[key];
+      if (!isActive(status.status) || !settings) {
+        launched.delete(name);
+        continue;
+      }
       projects.push({
         name,
         kind: 'service',
@@ -186,20 +224,42 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     };
   }
 
+  /** Réglages d'un dépôt du dossier racine courant (undefined pour un nom absent du scan). */
+  const settingsOf = (name: string): ProjectSettings | undefined => {
+    const repo = repos.get(name);
+    return repo ? getState().projects[projectKey(repo.path)] : undefined;
+  };
+
+  async function startService(name: string, repoPath: string, launch: LaunchSpec, env: Record<string, string>, restart: boolean): Promise<void> {
+    launched.set(name, projectKey(repoPath));
+    if (restart) await pm.restart(name, launch, env);
+    else pm.start(name, launch, env);
+  }
+
   async function act(names: string[], action: 'start' | 'stop' | 'restart'): Promise<void> {
     await Promise.all(
       names.map(async (name) => {
         if (busy.has(name) || repos.get(name)?.kind === 'database') return;
-        const settings = getState().projects[name];
-        if (action === 'stop') return pm.stop(name);
-        if (!settings?.launch) return;
-        if (action === 'start') return pm.start(name, settings.launch, settings.env);
-        return pm.restart(name, settings.launch, settings.env);
+        // Verrou partagé avec la bascule de branche : un redémarrage ne peut pas s'intercaler.
+        busy.add(name);
+        try {
+          // Arrêt possible même si le dossier a disparu ; lancement seulement pour un dépôt de la racine courante.
+          if (action === 'stop') return await pm.stop(name);
+          const repo = repos.get(name);
+          const settings = settingsOf(name);
+          if (!repo || !settings?.launch) return;
+          await startService(name, repo.path, settings.launch, settings.env, action === 'restart');
+        } finally {
+          busy.delete(name);
+        }
       }),
     );
   }
 
-  const getSettings = (name: string): ProjectSettings | null => getState().projects[name] ?? null;
+  const getSettings = (name: string): ProjectSettings | null => {
+    const key = repos.has(name) ? projectKey(repos.get(name)!.path) : launched.get(name);
+    return key ? getState().projects[key] ?? null : null;
+  };
 
   function updateSettings(name: string, patch: { command?: string; env?: Record<string, string> }): void {
     const settings = getSettings(name);
@@ -218,7 +278,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     if (!repo || repo.kind !== 'service') throw new Error(`Projet inconnu : ${name}`);
     const { launch, env } = detectLaunch(repo.path, configKey);
     const settings: ProjectSettings = { launch, env, importedAt: new Date().toISOString() };
-    getState().projects[name] = settings;
+    getState().projects[projectKey(repo.path)] = settings;
     persist();
     return settings;
   }
@@ -248,7 +308,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     try {
       const log = (text: string) => pm.log(name, 'sys', text);
       const logFailure = (o: SwitchBranchResult) => log(`✖ Bascule impossible (${o.reason}) : ${o.detail ?? ''}`);
-      const settings = getState().projects[name];
+      const settings = settingsOf(name);
 
       log(`⇄ Bascule vers ${branch}`);
       // Pré-vérification avant tout arrêt : un projet refusé (modifs, branche absente) n'est pas touché.
@@ -293,7 +353,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       let restarted = false;
       if (wasRunning && settings?.launch) {
         log('▶ Relance');
-        pm.start(name, settings.launch, settings.env);
+        await startService(name, repo.path, settings.launch, settings.env, false);
         restarted = true;
       }
 
