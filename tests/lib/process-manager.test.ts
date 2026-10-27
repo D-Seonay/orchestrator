@@ -33,17 +33,49 @@ describe('ProcessManager', () => {
   let pidFile: string;
   let manager: ProcessManager;
 
-  const make = (opts: Partial<ProcessManagerOptions> = {}) =>
-    (manager = new ProcessManager({ pidFile, backoffMs: () => 50, crashWindowMs: 60_000, ...opts }));
+  let managers: ProcessManager[];
+
+  const make = (opts: Partial<ProcessManagerOptions> = {}) => {
+    manager = new ProcessManager({ pidFile, backoffMs: () => 50, crashWindowMs: 60_000, ...opts });
+    managers.push(manager);
+    return manager;
+  };
+
+  // Pid of the grandchild node (first all-digits stdout line of LONG), once it exists.
+  const grandChildPid = (name: string): number | undefined => {
+    const line = manager.logs(name, 0).find((l) => l.stream === 'out' && /^\d+$/.test(l.text));
+    return line ? Number(line.text) : undefined;
+  };
+
+  // Starts LONG and waits until its grandchild exists, so a later stop/kill really reaches it.
+  const startLong = async (name: string): Promise<number> => {
+    manager.start(name, LONG, {});
+    await waitFor(() => grandChildPid(name) !== undefined);
+    return grandChildPid(name)!;
+  };
 
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orch-pm-'));
     pidFile = path.join(dir, 'pids.json');
+    managers = [];
     make();
   });
 
   afterEach(() => {
-    manager.killAll();
+    const recorded = new Set<number>();
+    for (const m of managers) {
+      const names = (m as unknown as { entries: Map<string, unknown> }).entries.keys();
+      for (const name of names) {
+        for (const l of m.logs(name, 0)) if (l.stream === 'out' && /^\d+$/.test(l.text)) recorded.add(Number(l.text));
+      }
+      m.killAll();
+    }
+    // Safety net: force-kill, by exact pid only, any grandchild we recorded that is still alive.
+    for (const pid of recorded) {
+      if (isAlive(pid)) {
+        try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+      }
+    }
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
@@ -68,9 +100,7 @@ describe('ProcessManager', () => {
   }, T);
 
   it('stop resolves once the process tree is gone and status is stopped', async () => {
-    manager.start('svc', LONG, {});
-    await waitFor(() => manager.logs('svc', 0).some((l) => /^\d+$/.test(l.text)));
-    const grandChild = Number(manager.logs('svc', 0).find((l) => /^\d+$/.test(l.text))!.text);
+    const grandChild = await startLong('svc');
     const shellPid = manager.status('svc').pid!;
     expect(manager.status('svc').status).toBe('running');
     expect(isAlive(grandChild)).toBe(true);
@@ -90,14 +120,14 @@ describe('ProcessManager', () => {
     expect(manager.logs('nope', 0)).toEqual([]);
     await manager.stop('nope');
 
-    manager.start('svc', LONG, {});
+    await startLong('svc');
     const pid = manager.status('svc').pid;
     manager.start('svc', LONG, {});
     expect(manager.status('svc').pid).toBe(pid);
   }, T);
 
   it('records the running pid in the pidFile', async () => {
-    manager.start('svc', LONG, {});
+    await startLong('svc');
     const pid = manager.status('svc').pid;
     expect(JSON.parse(fs.readFileSync(pidFile, 'utf8'))).toEqual({ svc: { pid, startedAt: expect.any(Number) } });
   }, T);
@@ -150,8 +180,7 @@ describe('ProcessManager', () => {
   }, T);
 
   it('keeps the seq increasing across restarts', async () => {
-    manager.start('svc', LONG, {});
-    await waitFor(() => manager.logs('svc', 0).length >= 1);
+    await startLong('svc');
     const before = manager.logs('svc', 0).at(-1)!.seq;
     await manager.restart('svc', LONG, {});
     await waitFor(() => manager.logs('svc', before).some((l) => l.stream === 'out'));
@@ -163,10 +192,24 @@ describe('ProcessManager', () => {
     make({ backoffMs: () => 5000, stableMs: 300 });
     manager.start('svc', CRASH, {});
     await waitFor(() => manager.status('svc').lastCrash !== null);
-    manager.start('svc', LONG, {});
+    await startLong('svc');
+    expect(manager.status('svc').status).toBe('running');
+    await waitFor(() => manager.status('svc').lastCrash === null, 3000);
+  }, T);
+
+  it('a stale exit from a stopped run does not cancel the next run\'s stability timer', async () => {
+    make({ backoffMs: () => 5000, stableMs: 1500, stopTimeoutMs: 1 });
+    manager.start('svc', CRASH, {});
+    await waitFor(() => manager.status('svc').lastCrash !== null);
+    await startLong('svc');
+    // stop() gives up after 1 ms, so the old run's exit event arrives after the new run has started.
+    await manager.stop('svc');
+    const second = spec(`node -e "console.log('second', process.pid); setInterval(() => {}, 1000)"`);
+    manager.start('svc', second, {});
     expect(manager.status('svc').status).toBe('running');
     expect(manager.status('svc').lastCrash).not.toBeNull();
-    await waitFor(() => manager.status('svc').lastCrash === null, 3000);
+    await waitFor(() => manager.logs('svc', 0).some((l) => l.text.startsWith('second ')));
+    await waitFor(() => manager.status('svc').lastCrash === null, 4000);
   }, T);
 
   it('trims logs to maxLogLines', async () => {
@@ -254,7 +297,7 @@ describe('ProcessManager', () => {
 
   it('stop gives up after the timeout, logs it and settles to stopped', async () => {
     make({ stopTimeoutMs: 1 });
-    manager.start('svc', LONG, {});
+    await startLong('svc');
     const pid = manager.status('svc').pid!;
 
     await manager.stop('svc');

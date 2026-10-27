@@ -40,6 +40,8 @@ interface Run {
   resolveExit: () => void;
   resolveSettled: () => void;
   drained: Promise<void>;
+  /** Forgets the previous crash once this run stayed up; per run so a stale exit cannot cancel a newer run's timer. */
+  stableTimer: NodeJS.Timeout | null;
 }
 
 interface Entry {
@@ -54,7 +56,6 @@ interface Entry {
   crashTimes: number[];
   lastCrash: CrashInfo | null;
   relaunchTimer: NodeJS.Timeout | null;
-  stableTimer: NodeJS.Timeout | null;
 }
 
 const isValidPid = (pid: unknown): pid is number => typeof pid === 'number' && Number.isInteger(pid) && pid > 0;
@@ -265,7 +266,7 @@ export class ProcessManager {
     if (!entry) {
       entry = {
         name, spec: null, env: {}, status: 'stopped', run: null, logs: [], seq: 0, restarts: 0,
-        crashTimes: [], lastCrash: null, relaunchTimer: null, stableTimer: null,
+        crashTimes: [], lastCrash: null, relaunchTimer: null,
       };
       this.entries.set(name, entry);
     }
@@ -275,6 +276,11 @@ export class ProcessManager {
   private clearRelaunch(entry: Entry): void {
     if (entry.relaunchTimer) clearTimeout(entry.relaunchTimer);
     entry.relaunchTimer = null;
+  }
+
+  private clearStable(run: Run): void {
+    if (run.stableTimer) clearTimeout(run.stableTimer);
+    run.stableTimer = null;
   }
 
   private push(entry: Entry, stream: LogLine['stream'], raw: string): void {
@@ -319,6 +325,7 @@ export class ProcessManager {
       resolveExit: () => resolveExit(),
       resolveSettled: () => resolveSettled(),
       drained: Promise.all(closed).then(() => undefined),
+      stableTimer: null,
     };
     entry.run = run;
     entry.status = 'running';
@@ -328,10 +335,10 @@ export class ProcessManager {
     readline.createInterface({ input: child.stderr! }).on('line', (l) => this.push(entry, 'err', l));
 
     if (this.stableMs >= 0) {
-      entry.stableTimer = setTimeout(() => {
+      run.stableTimer = setTimeout(() => {
         if (entry.run === run && !run.exited) entry.lastCrash = null;
       }, this.stableMs);
-      entry.stableTimer.unref();
+      run.stableTimer.unref();
     }
 
     child.once('error', (err) => {
@@ -344,8 +351,7 @@ export class ProcessManager {
   private onExit(entry: Entry, run: Run, exitCode: number | null): void {
     if (run.exited) return;
     run.exited = true;
-    if (entry.stableTimer) clearTimeout(entry.stableTimer);
-    entry.stableTimer = null;
+    this.clearStable(run);
     this.writePidFile();
     run.resolveExit();
 
@@ -363,8 +369,7 @@ export class ProcessManager {
 
   private settleStopped(entry: Entry, run: Run): void {
     run.settled = true;
-    if (entry.stableTimer) clearTimeout(entry.stableTimer);
-    entry.stableTimer = null;
+    this.clearStable(run);
     if (entry.run === run) {
       entry.run = null;
       entry.status = 'stopped';
