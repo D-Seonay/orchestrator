@@ -306,6 +306,12 @@ describe('ProcessManager', () => {
     expect(manager.logs('svc', 0).some((l) => l.stream === 'sys' && l.text === `✖ Impossible d'arrêter le process (pid ${pid})`)).toBe(true);
   }, T);
 
+  it('log appends external lines to the project logs', () => {
+    make();
+    manager.log('svc', 'sys', '\u001b[32mhello\u001b[0m');
+    expect(manager.logs('svc', 0).map((l) => [l.stream, l.text])).toEqual([['sys', 'hello']]);
+  });
+
   it('cleanupOrphans tolerates a missing or corrupt pidFile', () => {
     expect(() => manager.cleanupOrphans()).not.toThrow();
     fs.writeFileSync(pidFile, 'not json');

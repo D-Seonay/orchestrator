@@ -210,6 +210,11 @@ export class ProcessManager {
     return entry ? entry.logs.filter((l) => l.seq > sinceSeq) : [];
   }
 
+  /** Appends a line to a project's log buffer (used by the orchestrator for branch switches and installs). */
+  log(name: string, stream: LogLine['stream'], text: string): void {
+    this.push(this.entry(name), stream, text);
+  }
+
   /** Synchronous so it can run inside `process.on('exit')`. */
   killAll(): void {
     for (const entry of this.entries.values()) {
