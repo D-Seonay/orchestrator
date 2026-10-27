@@ -19,7 +19,7 @@ npm run dev                 # développement
 npm run build && npm start  # production locale
 ```
 
-Les deux commandes lient le serveur à `127.0.0.1` uniquement (jamais exposé sur le réseau) ; l'interface est sur <http://127.0.0.1:3000>. Aucun service n'est démarré automatiquement au lancement d'Orchestrator : on les démarre depuis l'interface.
+Les deux commandes lient le serveur à `127.0.0.1` uniquement (jamais exposé sur le réseau) ; l'interface est sur <http://127.0.0.1:3000>. Les routes `/api/*` refusent (403) toute requête dont l'en-tête `Host` n'est pas `127.0.0.1`, `localhost` ou `[::1]` (protection contre le DNS rebinding), et les routes qui modifient l'état refusent une `Origin` étrangère. Aucun service n'est démarré automatiquement au lancement d'Orchestrator : on les démarre depuis l'interface.
 
 Autres scripts : `npm test` (Vitest), `npm run lint`.
 

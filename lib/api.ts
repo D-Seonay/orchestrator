@@ -20,6 +20,20 @@ export function guardMutation(req: Request): NextResponse | null {
   return fail('Origine non autorisée', 403);
 }
 
+/**
+ * Protection contre le DNS rebinding : l'en-tête `Host` doit désigner la machine locale
+ * (un domaine tiers résolu vers 127.0.0.1 garde son propre nom dans `Host`). Host absent ou illisible : refusé.
+ */
+export function isLocalHost(host: string | null): boolean {
+  // Ni identifiants (« evil@127.0.0.1 ») ni chemin : uniquement hôte[:port].
+  if (!host || !/^[^\s@/\\?#]+$/.test(host)) return false;
+  try {
+    return LOCAL_HOSTS.has(new URL(`http://${host}`).hostname);
+  } catch {
+    return false;
+  }
+}
+
 /** Corps JSON de la requête, ou null s'il est absent, invalide ou n'est pas déclaré application/json. */
 export async function readJson(req: Request): Promise<Record<string, unknown> | null> {
   if (!(req.headers.get('content-type') ?? '').toLowerCase().startsWith('application/json')) return null;
