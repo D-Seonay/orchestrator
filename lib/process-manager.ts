@@ -1,5 +1,6 @@
 import { spawn, execFile, execFileSync, type ChildProcess } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import readline from 'readline';
 import type { CrashInfo, LaunchSpec, LogLine, ProcessStatus, RunStatus } from './types';
@@ -13,12 +14,16 @@ export interface ProcessManagerOptions {
   backoffMs?: (crashCount: number) => number;
   /** How long a process must stay up before the previous crash is forgotten. */
   stableMs?: number;
+  /** How long stop() waits for the process to exit before giving up (default 10 s). */
+  stopTimeoutMs?: number;
 }
 
 const IS_WINDOWS = process.platform === 'win32';
 const CRASH_TAIL_LINES = 20;
 // Grace period for stdout/stderr to drain after the child exited, so the crash tail is complete.
 const DRAIN_TIMEOUT_MS = 250;
+// An orphan is only killed if its real creation time is this close to the recorded one (PID reuse guard).
+const START_TIME_TOLERANCE_MS = 5000;
 
 const defaultBackoff = (crashCount: number) => Math.min(1500 * 2 ** Math.max(0, crashCount - 1), 10_000);
 
@@ -52,7 +57,46 @@ interface Entry {
   stableTimer: NodeJS.Timeout | null;
 }
 
+const isValidPid = (pid: unknown): pid is number => typeof pid === 'number' && Number.isInteger(pid) && pid > 0;
+
+/** Creation time (ms epoch) of each live pid; pids that are gone or unreadable are omitted. */
+function readStartTimes(pids: number[]): Map<number, number> {
+  const times = new Map<number, number>();
+  if (pids.length === 0) return times;
+  try {
+    if (IS_WINDOWS) {
+      const script =
+        `Get-Process -Id ${pids.join(',')} -ErrorAction SilentlyContinue | ` +
+        `Select-Object Id,@{n='t';e={[DateTimeOffset]::new($_.StartTime).ToUnixTimeMilliseconds()}} | ` +
+        'ConvertTo-Json -Compress';
+      const out = execFileSync('powershell.exe', ['-NoProfile', '-Command', script], {
+        encoding: 'utf8', timeout: 15_000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim();
+      if (!out) return times;
+      const parsed: unknown = JSON.parse(out);
+      for (const row of Array.isArray(parsed) ? parsed : [parsed]) {
+        const r = row as { Id?: unknown; t?: unknown };
+        if (isValidPid(r.Id) && typeof r.t === 'number' && Number.isFinite(r.t)) times.set(r.Id, r.t);
+      }
+    } else {
+      for (const pid of pids) {
+        try {
+          const out = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+            encoding: 'utf8', timeout: 5000, env: { ...process.env, LC_ALL: 'C' }, stdio: ['ignore', 'pipe', 'ignore'],
+          }).trim();
+          const t = Date.parse(out);
+          if (out && Number.isFinite(t)) times.set(pid, t);
+        } catch { /* gone */ }
+      }
+    }
+  } catch {
+    // Unable to verify: callers then kill nothing.
+  }
+  return times;
+}
+
 function killTreeSync(pid: number): void {
+  if (!isValidPid(pid)) return;
   try {
     if (IS_WINDOWS) execFileSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' });
     else process.kill(-pid, 'SIGKILL');
@@ -66,6 +110,7 @@ function killTreeSync(pid: number): void {
 
 function killTree(run: Run): void {
   const { pid, child } = run;
+  if (!isValidPid(pid)) return;
   const fallback = () => {
     if (run.exited) return;
     try { child.kill('SIGKILL'); } catch { /* ignore */ }
@@ -89,6 +134,7 @@ export class ProcessManager {
   private readonly crashWindowMs: number;
   private readonly backoffMs: (crashCount: number) => number;
   private readonly stableMs: number;
+  private readonly stopTimeoutMs: number;
 
   constructor(opts: ProcessManagerOptions) {
     this.pidFile = opts.pidFile;
@@ -97,6 +143,7 @@ export class ProcessManager {
     this.crashWindowMs = opts.crashWindowMs ?? 60_000;
     this.backoffMs = opts.backoffMs ?? defaultBackoff;
     this.stableMs = opts.stableMs ?? 10_000;
+    this.stopTimeoutMs = opts.stopTimeoutMs ?? 10_000;
   }
 
   start(name: string, spec: LaunchSpec, env: Record<string, string>): void {
@@ -121,7 +168,16 @@ export class ProcessManager {
     run.stopRequested = true;
     if (!run.exited) {
       killTree(run);
-      await run.exitPromise;
+      let timer: NodeJS.Timeout | undefined;
+      const timedOut = await Promise.race([
+        run.exitPromise.then(() => false),
+        new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(true), this.stopTimeoutMs); }),
+      ]);
+      clearTimeout(timer);
+      if (timedOut && !run.exited) {
+        this.push(entry, 'sys', `✖ Impossible d'arrêter le process (pid ${run.pid})`);
+        this.settleStopped(entry, run);
+      }
     }
     await run.settledPromise;
   }
@@ -169,17 +225,35 @@ export class ProcessManager {
     this.writePidFile();
   }
 
+  /**
+   * Kills processes recorded by a previous run. A recorded pid is only trusted when the live process
+   * was created when we recorded it, so a reused pid (reboot, stale pid file) is never killed.
+   */
   cleanupOrphans(): void {
-    let recorded: Record<string, unknown> = {};
+    let recorded: Record<string, unknown>;
+    let mtimeMs: number;
     try {
+      mtimeMs = fs.statSync(this.pidFile).mtimeMs;
       recorded = JSON.parse(fs.readFileSync(this.pidFile, 'utf8'));
     } catch {
       return;
     }
-    const ours = new Set<number>([process.pid]);
-    for (const entry of this.entries.values()) if (entry.run) ours.add(entry.run.pid);
-    for (const pid of Object.values(recorded)) {
-      if (typeof pid === 'number' && Number.isInteger(pid) && pid > 0 && !ours.has(pid)) killTreeSync(pid);
+    const bootTime = Date.now() - os.uptime() * 1000;
+    if (mtimeMs >= bootTime && recorded && typeof recorded === 'object') {
+      const ours = new Set<number>([process.pid]);
+      for (const entry of this.entries.values()) if (entry.run) ours.add(entry.run.pid);
+      const candidates: { pid: number; startedAt: number }[] = [];
+      for (const value of Object.values(recorded)) {
+        const v = value as { pid?: unknown; startedAt?: unknown } | null;
+        if (v && isValidPid(v.pid) && typeof v.startedAt === 'number' && !ours.has(v.pid)) {
+          candidates.push({ pid: v.pid, startedAt: v.startedAt });
+        }
+      }
+      const live = readStartTimes(candidates.map((c) => c.pid));
+      for (const { pid, startedAt } of candidates) {
+        const created = live.get(pid);
+        if (created !== undefined && Math.abs(created - startedAt) <= START_TIME_TOLERANCE_MS) killTreeSync(pid);
+      }
     }
     this.writePidFile();
   }
@@ -327,9 +401,10 @@ export class ProcessManager {
   }
 
   private writePidFile(): void {
-    const pids: Record<string, number> = {};
+    const pids: Record<string, { pid: number; startedAt: number }> = {};
     for (const entry of this.entries.values()) {
-      if (entry.run && !entry.run.exited && entry.run.pid > 0) pids[entry.name] = entry.run.pid;
+      const run = entry.run;
+      if (run && !run.exited && isValidPid(run.pid)) pids[entry.name] = { pid: run.pid, startedAt: run.startedAt };
     }
     try {
       fs.mkdirSync(path.dirname(this.pidFile), { recursive: true });

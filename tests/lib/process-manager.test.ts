@@ -99,7 +99,7 @@ describe('ProcessManager', () => {
   it('records the running pid in the pidFile', async () => {
     manager.start('svc', LONG, {});
     const pid = manager.status('svc').pid;
-    expect(JSON.parse(fs.readFileSync(pidFile, 'utf8'))).toEqual({ svc: pid });
+    expect(JSON.parse(fs.readFileSync(pidFile, 'utf8'))).toEqual({ svc: { pid, startedAt: expect.any(Number) } });
   }, T);
 
   it('restarts after a crash and records lastCrash with stderr tail', async () => {
@@ -196,17 +196,71 @@ describe('ProcessManager', () => {
     expect(manager.status('a').status).toBe('stopped');
   }, T);
 
-  it('cleanupOrphans kills pids left in pidFile', async () => {
+  const spawnOrphan = () => {
     const orphan = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
     orphan.unref();
-    const pid = orphan.pid!;
-    expect(isAlive(pid)).toBe(true);
-    fs.writeFileSync(pidFile, JSON.stringify({ ghost: pid }));
+    return orphan.pid!;
+  };
+  const killQuietly = (pid: number) => {
+    try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+  };
 
-    manager.cleanupOrphans();
+  it('cleanupOrphans kills pids left in pidFile when startedAt matches', async () => {
+    const pid = spawnOrphan();
+    try {
+      expect(isAlive(pid)).toBe(true);
+      fs.writeFileSync(pidFile, JSON.stringify({ ghost: { pid, startedAt: Date.now() } }));
 
-    await waitFor(() => !isAlive(pid), 3000);
-    expect(JSON.parse(fs.readFileSync(pidFile, 'utf8'))).toEqual({});
+      manager.cleanupOrphans();
+
+      await waitFor(() => !isAlive(pid), 3000);
+      expect(JSON.parse(fs.readFileSync(pidFile, 'utf8'))).toEqual({});
+    } finally {
+      killQuietly(pid);
+    }
+  }, T);
+
+  it('cleanupOrphans spares a pid whose startedAt does not match (pid reuse)', async () => {
+    const pid = spawnOrphan();
+    try {
+      fs.writeFileSync(pidFile, JSON.stringify({ ghost: { pid, startedAt: Date.now() - 3_600_000 } }));
+
+      manager.cleanupOrphans();
+
+      await new Promise((r) => setTimeout(r, 500));
+      expect(isAlive(pid)).toBe(true);
+      expect(JSON.parse(fs.readFileSync(pidFile, 'utf8'))).toEqual({});
+    } finally {
+      killQuietly(pid);
+    }
+  }, T);
+
+  it('cleanupOrphans clears a pidFile older than the last boot without killing', async () => {
+    const pid = spawnOrphan();
+    try {
+      fs.writeFileSync(pidFile, JSON.stringify({ ghost: { pid, startedAt: Date.now() } }));
+      const beforeBoot = new Date(Date.now() - os.uptime() * 1000 - 60_000);
+      fs.utimesSync(pidFile, beforeBoot, beforeBoot);
+
+      manager.cleanupOrphans();
+
+      await new Promise((r) => setTimeout(r, 500));
+      expect(isAlive(pid)).toBe(true);
+      expect(JSON.parse(fs.readFileSync(pidFile, 'utf8'))).toEqual({});
+    } finally {
+      killQuietly(pid);
+    }
+  }, T);
+
+  it('stop gives up after the timeout, logs it and settles to stopped', async () => {
+    make({ stopTimeoutMs: 1 });
+    manager.start('svc', LONG, {});
+    const pid = manager.status('svc').pid!;
+
+    await manager.stop('svc');
+
+    expect(manager.status('svc').status).toBe('stopped');
+    expect(manager.logs('svc', 0).some((l) => l.stream === 'sys' && l.text === `✖ Impossible d'arrêter le process (pid ${pid})`)).toBe(true);
   }, T);
 
   it('cleanupOrphans tolerates a missing or corrupt pidFile', () => {
