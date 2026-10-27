@@ -120,7 +120,7 @@ function ProjectRow({
           </span>
           {project.missing && <Badge className="border-red-800 text-red-400">dossier absent</Badge>}
           {project.restarts > 0 && (
-            <span className="text-zinc-500 shrink-0" title="Relances automatiques">
+            <span className="text-zinc-500 shrink-0" title="Redémarrages">
               ↺{project.restarts}
             </span>
           )}

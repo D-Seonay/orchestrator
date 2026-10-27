@@ -11,11 +11,11 @@ export default function NotFound() {
         <header className="flex items-center justify-between border-b border-zinc-800 pb-4 mb-8">
           <div className="flex items-center gap-3">
             <span className="text-zinc-600 font-bold tracking-widest text-sm">ATD//</span>
-            <span className="text-zinc-400 text-xs tracking-wider uppercase">Orchestrator Pro</span>
+            <span className="text-zinc-400 text-xs tracking-wider uppercase">Orchestrator</span>
           </div>
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-            <span className="text-red-400 text-xs tracking-widest uppercase">ERR_NOT_FOUND</span>
+            <span className="text-red-400 text-xs tracking-widest uppercase">Introuvable</span>
           </div>
         </header>
 
@@ -36,11 +36,11 @@ export default function NotFound() {
                 404
               </span>
               <span className="text-red-400 text-xs md:text-sm font-semibold tracking-widest uppercase">
-                {"//"} RESOURCE_UNAVAILABLE
+                {"//"} Page introuvable
               </span>
             </div>
             <span className="text-zinc-600 text-xs uppercase tracking-wider font-mono">
-              EXIT_CODE: 0x194
+              HTTP 404
             </span>
           </div>
 
@@ -48,16 +48,13 @@ export default function NotFound() {
           <div className="bg-black border border-zinc-900 p-4 rounded-none font-mono text-xs flex flex-col gap-2">
             <div className="flex items-center gap-2 text-zinc-500 border-b border-zinc-900 pb-2 mb-1">
               <span className="text-red-500 font-bold">●</span>
-              <span>SYS_KERNEL: DIAGNOSTIC STACK DUMP</span>
+              <span>Diagnostic</span>
             </div>
             <div className="text-zinc-400">
-              <span className="text-red-400 font-bold">[ERR_HTTP_404]</span> The requested URL could not be resolved by the router.
+              <span className="text-red-400 font-bold">[404]</span> Cette adresse ne correspond à aucune page d&apos;Orchestrator.
             </div>
             <div className="text-zinc-600">
-              [DEBUG] Endpoint query terminated. Target process or resource does not exist.
-            </div>
-            <div className="text-zinc-600">
-              [SYSTEM] Possible reasons: mistyped path, decommissioned route, or removed service.
+              Causes possibles : adresse mal saisie ou lien périmé. Les services se pilotent depuis le tableau de bord.
             </div>
           </div>
 
@@ -67,7 +64,7 @@ export default function NotFound() {
               href="/"
               className="bg-white hover:bg-zinc-200 text-black px-5 py-2.5 text-xs font-bold uppercase tracking-wider transition-colors text-center"
             >
-              ⌂ Retour au Dashboard
+              ⌂ Retour au tableau de bord
             </Link>
             <button
               onClick={() => {
@@ -83,8 +80,8 @@ export default function NotFound() {
 
       {/* Footer */}
       <footer className="max-w-4xl mx-auto w-full pt-4 border-t border-zinc-900 text-zinc-600 text-xs flex flex-col sm:flex-row justify-between items-center gap-2">
-        <div>ORCHESTRATOR STATUS: NOMINAL</div>
-        <div>HTTP_STATUS // 404 NOT FOUND</div>
+        <div>Orchestrator</div>
+        <div>HTTP 404 — page introuvable</div>
       </footer>
     </div>
   );
