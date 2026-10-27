@@ -316,6 +316,42 @@ describe('orchestrator', () => {
     expect(text).toContain('npm install');
   }, 120_000);
 
+  it('switchBranches interrupts an npm install that exceeds its timeout and kills its tree', async () => {
+    // Sur staging, le lock change et un preinstall note son pid puis bloque indéfiniment.
+    const w = pair.work;
+    const pidFile = path.join(pair.base, 'orch-hang-install.pid');
+    commitFile(w, 'package.json', JSON.stringify({ name: 'svc-a', version: '1.0.0' }), 'add package.json');
+    push(w, 'origin', 'main');
+    git(w, 'checkout', 'staging');
+    git(w, 'merge', 'main', '--no-edit');
+    writeFile(w, 'orch-hang-install.cjs', `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000);\n`);
+    git(w, 'add', 'orch-hang-install.cjs');
+    commitFile(w, 'package.json', JSON.stringify({ name: 'svc-a', version: '1.0.0', scripts: { preinstall: 'node orch-hang-install.cjs' } }), 'hanging preinstall');
+    commitFile(w, 'package-lock.json', '{"name":"svc-a","version":"1.0.0","lockfileVersion":3,"requires":true,"packages":{"":{"name":"svc-a","version":"1.0.0"}}}\n', 'lock');
+    push(w, 'origin', 'staging');
+    git(w, 'checkout', 'main');
+    cloneRepo(pair.origin, path.join(root, 'svc-a'));
+
+    const quick = createOrchestrator({
+      store: { load: () => structuredClone(saved), save: (s) => { saved = structuredClone(s); } },
+      pm,
+      installTimeoutMs: 5000,
+    });
+    quick.refresh();
+
+    const [result] = await quick.switchBranches(['svc-a'], 'staging', { stash: false });
+
+    expect(result).toMatchObject({ ok: true, installed: false, detail: 'npm install interrompu après 5 s' });
+    expect(quick.logs('svc-a', 0).some((l) => l.stream === 'sys' && l.text === '✖ npm install interrompu après 5 s')).toBe(true);
+
+    const hangPid = Number(fs.readFileSync(pidFile, 'utf8'));
+    const alive = () => { try { process.kill(hangPid, 0); return true; } catch { return false; } };
+    await waitFor(() => !alive(), 5000).catch(() => {
+      process.kill(hangPid, 'SIGKILL'); // filet de sécurité, pid exact
+      throw new Error('npm install tree survived the timeout');
+    });
+  }, 60_000);
+
   it('safeRefresh (timer body) swallows a store.save failure and retries the save on the next tick', () => {
     addService('svc-a');
     let fail = true;

@@ -1,24 +1,46 @@
 import { execFile } from 'child_process';
-import { promisify } from 'util';
+import { childEnv } from './child-env';
+import { formatDuration, killTreeAsync } from './kill-tree';
 import type { GitInfo } from './types';
 
-const execFileAsync = promisify(execFile);
+/** Délai maximal d'une opération réseau (fetch, pull) avant d'interrompre git et ses sous-process. */
+export const NETWORK_TIMEOUT_MS = 60_000;
 
-interface GitResult { ok: boolean; stdout: string; stderr: string; }
+interface GitResult { ok: boolean; stdout: string; stderr: string; timedOut?: boolean; }
 
-async function git(cwd: string, args: string[]): Promise<GitResult> {
-  try {
-    const { stdout, stderr } = await execFileAsync('git', args, {
-      cwd,
-      encoding: 'utf8',
-      maxBuffer: 16 * 1024 * 1024,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-    });
-    return { ok: true, stdout, stderr };
-  } catch (err) {
-    const e = err as { stdout?: string; stderr?: string; message?: string };
-    return { ok: false, stdout: e.stdout ?? '', stderr: (e.stderr || e.message || '').trim() };
-  }
+function git(cwd: string, args: string[], timeoutMs?: number): Promise<GitResult> {
+  return new Promise((resolve) => {
+    let timedOut = false;
+    let timer: NodeJS.Timeout | undefined;
+    const child = execFile(
+      'git',
+      args,
+      {
+        cwd,
+        encoding: 'utf8',
+        maxBuffer: 16 * 1024 * 1024,
+        windowsHide: true,
+        // Environnement nettoyé (des hooks peuvent lancer node) ; le status interrogé en boucle ne prend pas index.lock.
+        env: childEnv({ GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' }),
+      },
+      (err, stdout, stderr) => {
+        clearTimeout(timer);
+        if (timedOut) {
+          resolve({ ok: false, stdout, stderr: `git ${args[0]} interrompu après ${formatDuration(timeoutMs!)}`, timedOut: true });
+        } else if (!err) {
+          resolve({ ok: true, stdout, stderr });
+        } else {
+          resolve({ ok: false, stdout: stdout ?? '', stderr: (stderr || err.message || '').trim() });
+        }
+      },
+    );
+    if (timeoutMs !== undefined) {
+      timer = setTimeout(() => {
+        timedOut = true;
+        killTreeAsync(child.pid); // avec ses helpers (git-remote-https, ssh…)
+      }, timeoutMs);
+    }
+  });
 }
 
 function lines(output: string): string[] {
@@ -82,6 +104,12 @@ export interface SwitchBranchResult {
   lockChanged: boolean;
 }
 
+export interface SwitchOptions {
+  stash: boolean;
+  /** Délai des opérations réseau (défaut NETWORK_TIMEOUT_MS). */
+  timeoutMs?: number;
+}
+
 /** Résultat d'une pré-vérification réussie : de quoi appliquer la bascule sans refaire les contrôles réseau. */
 export interface SwitchPlan {
   branch: string;
@@ -103,7 +131,7 @@ const failure = (
  * Pré-vérification sans effet sur l'arbre de travail : refus si modifs non commitées (sans stash demandé),
  * fetch (un échec, hors ligne, est toléré), puis la branche doit exister en local ou sur origin.
  */
-export async function checkSwitch(cwd: string, branch: string, opts: { stash: boolean }): Promise<SwitchCheck> {
+export async function checkSwitch(cwd: string, branch: string, opts: SwitchOptions): Promise<SwitchCheck> {
   const notes: string[] = [];
 
   // 1. Arbre sale : refus, sauf mise de côté explicite (faite à l'application).
@@ -113,8 +141,9 @@ export async function checkSwitch(cwd: string, branch: string, opts: { stash: bo
   }
 
   // 2. Fetch.
-  const fetched = await git(cwd, ['fetch', 'origin', '--prune']);
-  if (!fetched.ok) notes.push('fetch origin impossible (hors ligne ?)');
+  const fetched = await git(cwd, ['fetch', 'origin', '--prune'], opts.timeoutMs ?? NETWORK_TIMEOUT_MS);
+  if (fetched.timedOut) notes.push(`${fetched.stderr} (origin injoignable ?)`);
+  else if (!fetched.ok) notes.push('fetch origin impossible (hors ligne ?)');
 
   // 3. La branche doit exister en local ou sur origin.
   const isLocal = (await git(cwd, ['show-ref', '--verify', '--quiet', `${LOCAL_PREFIX}${branch}`])).ok;
@@ -125,7 +154,7 @@ export async function checkSwitch(cwd: string, branch: string, opts: { stash: bo
 }
 
 /** Application d'une bascule pré-vérifiée : stash éventuel (jamais réappliqué), checkout, pull --ff-only, comparaison du lock. */
-export async function applySwitch(cwd: string, plan: SwitchPlan, opts: { stash: boolean }): Promise<SwitchBranchResult> {
+export async function applySwitch(cwd: string, plan: SwitchPlan, opts: SwitchOptions): Promise<SwitchBranchResult> {
   const { branch, isLocal, notes } = plan;
 
   // 4. L'arbre a pu changer depuis la pré-vérification : on recontrôle avant d'y toucher.
@@ -147,7 +176,10 @@ export async function applySwitch(cwd: string, plan: SwitchPlan, opts: { stash: 
 
   // 7. Mise à jour en fast-forward uniquement. Hors ligne, on avance sur la référence déjà récupérée.
   if (await hasUpstream(cwd)) {
-    const update = plan.fetched ? await git(cwd, ['pull', '--ff-only']) : await git(cwd, ['merge', '--ff-only', '@{u}']);
+    const update = plan.fetched
+      ? await git(cwd, ['pull', '--ff-only'], opts.timeoutMs ?? NETWORK_TIMEOUT_MS)
+      : await git(cwd, ['merge', '--ff-only', '@{u}']);
+    if (update.timedOut) return failure('error', `basculé sur ${branch} mais ${update.stderr}`, notes, await lockChanged());
     if (!update.ok) return failure('not-fast-forward', `basculé sur ${branch} mais pas à jour`, notes, await lockChanged());
   }
 
@@ -156,7 +188,7 @@ export async function applySwitch(cwd: string, plan: SwitchPlan, opts: { stash: 
 }
 
 /** Pré-vérification puis application. */
-export async function switchBranch(cwd: string, branch: string, opts: { stash: boolean }): Promise<SwitchBranchResult> {
+export async function switchBranch(cwd: string, branch: string, opts: SwitchOptions): Promise<SwitchBranchResult> {
   const check = await checkSwitch(cwd, branch, opts);
   return check.ok ? applySwitch(cwd, check.plan, opts) : check.result;
 }

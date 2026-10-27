@@ -178,6 +178,30 @@ describe('git', () => {
       expect((await getGitInfo(pair.work))?.branch).toBe('staging');
     }, 30_000);
 
+    it('interrupts a hanging fetch after the timeout, kills its process tree and says so', async () => {
+      // Transport « ext:: » : git lance ce script comme serveur distant ; il note son pid puis ne répond jamais.
+      const pidFile = path.join(pair.base, 'orch-hang-fetch.pid');
+      const hang = path.join(pair.base, 'orch-hang-fetch.cjs');
+      fs.writeFileSync(hang, `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000);\n`);
+      git(pair.work, 'config', 'protocol.ext.allow', 'always');
+      git(pair.work, 'remote', 'set-url', 'origin', `ext::node ${hang.replace(/\\/g, '/')}`);
+
+      const started = Date.now();
+      const check = await checkSwitch(pair.work, 'staging', { stash: false, timeoutMs: 1500 });
+      expect(Date.now() - started).toBeLessThan(10_000);
+
+      expect(check).toMatchObject({ ok: true, plan: { fetched: false } });
+      if (!check.ok) return;
+      expect(check.plan.notes.join(' ')).toContain('git fetch interrompu après 1.5 s');
+
+      const hangPid = Number(fs.readFileSync(pidFile, 'utf8'));
+      const alive = () => { try { process.kill(hangPid, 0); return true; } catch { return false; } };
+      const deadline = Date.now() + 5000;
+      while (alive() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+      if (alive()) process.kill(hangPid, 'SIGKILL'); // filet de sécurité, pid exact
+      expect(alive()).toBe(false);
+    }, 30_000);
+
     it('sets lockChanged only when package-lock.json differs', async () => {
       const same = await switchBranch(pair.work, 'staging', { stash: false });
       expect(same).toMatchObject({ ok: true, lockChanged: false });

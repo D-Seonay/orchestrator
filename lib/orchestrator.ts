@@ -2,6 +2,7 @@ import { spawn } from 'child_process';
 import path from 'path';
 import readline from 'readline';
 import { childEnv } from './child-env';
+import { formatDuration, killTreeAsync } from './kill-tree';
 import { scanRoot } from './discovery';
 import { detectLaunch, listRunConfigs } from './launch';
 import { applySwitch, checkSwitch, getGitInfo, listBranches, type SwitchBranchResult, type SwitchCheck } from './git';
@@ -23,10 +24,15 @@ import type {
 
 const REFRESH_INTERVAL_MS = 2000;
 const GIT_INTERVAL_MS = 10_000;
+const INSTALL_TIMEOUT_MS = 10 * 60_000;
 
 export interface OrchestratorDeps {
   store: { load(): StoredState; save(s: StoredState): void };
   pm: ProcessManager;
+  /** Délai de `npm install` après bascule (défaut 10 min). */
+  installTimeoutMs?: number;
+  /** Délai des fetch/pull de la bascule (défaut NETWORK_TIMEOUT_MS). */
+  gitTimeoutMs?: number;
 }
 
 const isActive = (status: RunStatus) => status === 'running' || status === 'restarting';
@@ -53,26 +59,40 @@ export function migrateProjectKeys(state: StoredState): boolean {
   return changed;
 }
 
-/** `npm install` dans le dépôt, sortie diffusée dans les logs du projet. Résout à true si le code de sortie est 0. */
-function runInstall(pm: ProcessManager, name: string, cwd: string): Promise<boolean> {
+type InstallOutcome = 'ok' | 'failed' | 'timeout';
+
+/**
+ * `npm install` dans le dépôt, sortie diffusée dans les logs du projet.
+ * Au-delà de `timeoutMs`, l'arbre de process est tué et le résultat est 'timeout'.
+ */
+function runInstall(pm: ProcessManager, name: string, cwd: string, timeoutMs: number): Promise<InstallOutcome> {
   return new Promise((resolve) => {
     let child;
     try {
       child = spawn('npm install', { cwd, env: childEnv(), shell: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (err) {
       pm.log(name, 'sys', `✖ npm install impossible : ${(err as Error).message}`);
-      resolve(false);
+      resolve('failed');
       return;
     }
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killTreeAsync(child.pid);
+    }, timeoutMs);
     // npm écrit ses avertissements sur stderr : ce ne sont pas des erreurs du projet.
     for (const stream of [child.stdout!, child.stderr!]) {
       readline.createInterface({ input: stream }).on('line', (line) => pm.log(name, 'out', line));
     }
     child.once('error', (err) => {
+      clearTimeout(timer);
       pm.log(name, 'sys', `✖ npm install impossible : ${err.message}`);
-      resolve(false);
+      resolve('failed');
     });
-    child.once('close', (code) => resolve(code === 0));
+    child.once('close', (code) => {
+      clearTimeout(timer);
+      resolve(timedOut ? 'timeout' : code === 0 ? 'ok' : 'failed');
+    });
   });
 }
 
@@ -307,6 +327,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     busy.add(name);
     try {
       const log = (text: string) => pm.log(name, 'sys', text);
+      const switchOpts = { ...opts, timeoutMs: deps.gitTimeoutMs };
       const logFailure = (o: SwitchBranchResult) => log(`✖ Bascule impossible (${o.reason}) : ${o.detail ?? ''}`);
       const settings = settingsOf(name);
 
@@ -314,7 +335,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       // Pré-vérification avant tout arrêt : un projet refusé (modifs, branche absente) n'est pas touché.
       let check: SwitchCheck;
       try {
-        check = await checkSwitch(repo.path, branch, opts);
+        check = await checkSwitch(repo.path, branch, switchOpts);
       } catch (err) {
         check = { ok: false, result: { ok: false, reason: 'error', detail: (err as Error).message, lockChanged: false } };
       }
@@ -333,7 +354,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
 
       let outcome: SwitchBranchResult;
       try {
-        outcome = await applySwitch(repo.path, check.plan, opts);
+        outcome = await applySwitch(repo.path, check.plan, switchOpts);
       } catch (err) {
         outcome = { ok: false, reason: 'error', detail: (err as Error).message, lockChanged: false };
       }
@@ -344,9 +365,13 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       let detail = outcome.detail;
       if (outcome.lockChanged) {
         log('▶ package-lock.json modifié — npm install');
-        installed = await runInstall(pm, name, repo.path);
-        log(installed ? '✔ npm install terminé' : '✖ npm install a échoué');
-        if (!installed) detail = [detail, 'npm install a échoué'].filter(Boolean).join(' — ');
+        const install = await runInstall(pm, name, repo.path, deps.installTimeoutMs ?? INSTALL_TIMEOUT_MS);
+        installed = install === 'ok';
+        const problem = install === 'timeout'
+          ? `npm install interrompu après ${formatDuration(deps.installTimeoutMs ?? INSTALL_TIMEOUT_MS)}`
+          : 'npm install a échoué';
+        log(installed ? '✔ npm install terminé' : `✖ ${problem}`);
+        if (!installed) detail = [detail, problem].filter(Boolean).join(' — ');
       }
 
       // Relance même si l'application a échoué : on ne laisse pas éteint un service qui tournait.

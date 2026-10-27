@@ -67,12 +67,14 @@ Si un service s'arrête sans que vous l'ayez demandé, il est relancé automatiq
 
 Disponible sur un projet ou sur plusieurs à la fois ; chaque projet est traité indépendamment (l'échec de l'un n'arrête pas les autres). Pour chacun :
 
-1. **Arbre modifié** (fichiers suivis) : la bascule est **bloquée**, sauf si vous choisissez « Stasher et basculer ». Orchestrator ne fait jamais de stash implicite ; le stash créé n'est **pas réappliqué** (à vous de faire `git stash pop`).
-2. Si le projet tournait, il est arrêté avant la bascule.
-3. `git fetch origin --prune` (un échec hors ligne est toléré), puis `checkout` de la branche locale, ou création d'une branche de suivi si elle n'existe que sur `origin`. Branche introuvable ⇒ échec.
+1. **Vérifications, sans rien toucher** : arbre modifié (fichiers suivis) ⇒ la bascule est **bloquée**, sauf si vous choisissez « Stasher et basculer » ; `git fetch origin --prune` (un échec hors ligne est toléré) ; la branche doit exister en local ou sur `origin`. Un projet refusé ici n'est **ni arrêté ni modifié** (et aucun stash n'est créé).
+2. Si le projet tournait, il est arrêté.
+3. Stash éventuel — Orchestrator ne fait jamais de stash implicite ; le stash créé n'est **pas réappliqué** (à vous de faire `git stash pop`) — puis `checkout` de la branche locale, ou création d'une branche de suivi si elle n'existe que sur `origin`.
 4. `git pull --ff-only` (fast-forward uniquement ; hors ligne, avance sur la référence déjà récupérée).
 5. `npm install` seulement si le `package-lock.json` a changé entre les deux branches.
-6. Si le projet tournait, il est **relancé** — même si la bascule a échoué, pour ne pas laisser éteint un service qui tournait.
+6. Si le projet tournait, il est **relancé** — même si les étapes 3 à 5 ont échoué, pour ne pas laisser éteint un service qui tournait.
+
+`git fetch` et `git pull` sont interrompus au bout de **60 s**, `npm install` au bout de **10 min** (arbre de processus tué) ; l'interruption est indiquée dans le résultat et dans les logs. Pendant une bascule, les boutons démarrer/arrêter/redémarrer du projet sont indisponibles (et inversement).
 
 Le détail de chaque étape est écrit dans les logs du projet.
 
