@@ -44,7 +44,7 @@ La racine par défaut est `C:\Repositories\AtoolDev\semaphore` ; elle se modifie
 
 Sans aucune de ces trois sources, le service n'a pas de commande (à saisir à la main dans ses paramètres).
 
-**Variables d'environnement** : celles de la configuration IntelliJ retenue, puis le `.env` du dépôt, qui **l'emporte** en cas de conflit. Elles sont ajoutées à l'environnement d'Orchestrator au lancement du service.
+**Variables d'environnement** : celles de la configuration IntelliJ retenue, puis le `.env` du dépôt, qui **l'emporte** en cas de conflit. Au lancement, le service reçoit l'environnement de votre session (celui dans lequel Orchestrator a été démarré : `PATH`, `JAVA_HOME`…) **sans** les variables propres à Next.js (`NODE_ENV`, `PORT`, `NODE_OPTIONS`, `__NEXT_*`, `NEXT_*`, `TURBOPACK*`), complété par les variables du projet, qui l'emportent — un projet peut donc définir lui-même `NODE_ENV`, `PORT` ou `NODE_OPTIONS`. Le `npm install` lancé après un changement de branche reçoit le même environnement de session nettoyé (sans les variables du projet), donc installe aussi les devDependencies.
 
 L'import est lu **une seule fois** puis stocké dans Orchestrator : commande et variables sont modifiables par projet dans l'interface, et un « réimport » (avec choix de la configuration IntelliJ) relit les sources. **Orchestrator n'écrit jamais dans les dépôts** (`.env`, `.idea/`, etc.) ; les seules actions sur un dépôt sont celles que vous demandez explicitement : `git fetch/stash/checkout/pull` et `npm install` (voir changement de branche).
 

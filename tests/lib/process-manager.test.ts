@@ -102,6 +102,53 @@ describe('ProcessManager', () => {
     await waitFor(() => manager.logs('svc', 0).some((l) => l.text === 'bar-123'));
   }, T);
 
+  describe('environment', () => {
+    const HOST = { PORT: '3000', NODE_ENV: 'production', NODE_OPTIONS: '--no-warnings', NEXT_RUNTIME: 'nodejs' };
+    let saved: Record<string, string | undefined>;
+    const PRINT = spec(
+      `node -e "console.log(process.pid); console.log(['ENV', process.env.PORT, process.env.NODE_ENV, process.env.NODE_OPTIONS, process.env.NEXT_RUNTIME].join('|')); setInterval(() => {}, 1000)"`,
+    );
+    const envLine = () => manager.logs('svc', 0).find((l) => l.text.startsWith('ENV|'))?.text;
+
+    beforeEach(() => {
+      saved = {};
+      for (const [k, v] of Object.entries(HOST)) {
+        saved[k] = process.env[k];
+        process.env[k] = v;
+      }
+    });
+
+    afterEach(() => {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    });
+
+    it('does not leak the host PORT, NODE_ENV, NODE_OPTIONS or Next variables to the service', async () => {
+      manager.start('svc', PRINT, {});
+      await waitFor(() => envLine() !== undefined);
+      expect(envLine()).toBe('ENV||||');
+    }, T);
+
+    it('passes them when they are in the project env', async () => {
+      manager.start('svc', PRINT, { PORT: '4100', NODE_ENV: 'development', NODE_OPTIONS: '--no-deprecation' });
+      await waitFor(() => envLine() !== undefined);
+      expect(envLine()).toBe('ENV|4100|development|--no-deprecation|');
+    }, T);
+
+    it("applies the project NODE_OPTIONS to the service, not to the watchdog", async () => {
+      const preload = path.join(dir, 'preload.cjs');
+      fs.writeFileSync(preload, "console.log('PRELOAD ' + process.pid);\n");
+      // NODE_OPTIONS traite « \ » comme un échappement entre guillemets : chemin en « / ».
+      manager.start('svc', LONG, { NODE_OPTIONS: `--require "${preload.replace(/\\/g, '/')}"` });
+      await waitFor(() => grandChildPid('svc') !== undefined);
+      const preloads = manager.logs('svc', 0).filter((l) => l.text.startsWith('PRELOAD ')).map((l) => Number(l.text.slice(8)));
+      expect(preloads).toEqual([grandChildPid('svc')]);
+      expect(preloads).not.toContain(manager.status('svc').pid);
+    }, T);
+  });
+
   it('stop resolves once the process tree is gone and status is stopped', async () => {
     const grandChild = await startLong('svc');
     const shellPid = manager.status('svc').pid!;

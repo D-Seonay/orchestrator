@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import readline from 'readline';
 import type { CrashInfo, LaunchSpec, LogLine, ProcessStatus, RunStatus } from './types';
+import { watchdogEnv } from './child-env';
 import { stripAnsi } from './utils';
 
 export interface ProcessManagerOptions {
@@ -316,7 +317,7 @@ export class ProcessManager {
       const encoded = Buffer.from(spec.command, 'utf8').toString('base64');
       child = spawn(process.execPath, [this.watchdogPath, String(this.orchestratorPid), encoded], {
         cwd: spec.cwd,
-        env: { ...process.env, ...entry.env },
+        env: watchdogEnv(entry.env),
         // Windows too: a non-detached child joins libuv's kill-on-close job, so a hard kill of the
         // Orchestrator would take the watchdog down before it can kill the service's descendants.
         detached: true,

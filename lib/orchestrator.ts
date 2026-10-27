@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import path from 'path';
 import readline from 'readline';
+import { childEnv } from './child-env';
 import { scanRoot } from './discovery';
 import { detectLaunch, listRunConfigs } from './launch';
 import { getGitInfo, listBranches, switchBranch } from './git';
@@ -34,7 +35,7 @@ function runInstall(pm: ProcessManager, name: string, cwd: string): Promise<bool
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn('npm install', { cwd, shell: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn('npm install', { cwd, env: childEnv(), shell: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (err) {
       pm.log(name, 'sys', `✖ npm install impossible : ${(err as Error).message}`);
       resolve(false);
