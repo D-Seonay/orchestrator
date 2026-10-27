@@ -92,6 +92,19 @@ describe('parseRunConfigs', () => {
     expect(configs[0].env).toEqual({ SECRET: 'a&b"c', JWT_DIR: 'C:/x/base/jwt' });
   });
 
+  it('decodes numeric character references without double-decoding', () => {
+    const xml = workspace(null, `
+    <configuration name="app.js" type="NodeJSConfigurationType" path-to-js-file="app.js" working-dir="$PROJECT_DIR$">
+      <envs>
+        <env name="MULTI" value="l1&#10;l2" />
+        <env name="HEX" value="&#x41;" />
+        <env name="ESC" value="&amp;quot;" />
+      </envs>
+    </configuration>`);
+    const { configs } = parseRunConfigs(xml, DIR);
+    expect(configs[0].env).toEqual({ MULTI: 'l1\nl2', HEX: 'A', ESC: '&quot;' });
+  });
+
   it('ignores docker and karma configurations', () => {
     const xml = workspace('Docker.Dockerfile', `
     <configuration name="Dockerfile" type="docker-deploy" factoryName="dockerfile">

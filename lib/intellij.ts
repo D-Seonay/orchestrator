@@ -9,12 +9,24 @@ const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
   parseAttributeValue: false,
+  processEntities: false,
   isArray: (tagName) => ARRAY_TAGS.has(tagName),
 });
 
+const NAMED_ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+
+// Single pass so that "&amp;quot;" decodes to the literal "&quot;", not to '"'.
+function decodeEntities(value: string): string {
+  return value.replace(/&(?:#(\d+)|#x([0-9a-fA-F]+)|(\w+));/g, (match, dec, hex, name) => {
+    if (name) return NAMED_ENTITIES[name] ?? match;
+    const code = dec !== undefined ? Number(dec) : parseInt(hex, 16);
+    return code <= 0x10ffff ? String.fromCodePoint(code) : match;
+  });
+}
+
 function attr(node: XmlNode | undefined, name: string): string | undefined {
   const value = node?.[`@_${name}`];
-  return typeof value === 'string' ? value : undefined;
+  return typeof value === 'string' ? decodeEntities(value) : undefined;
 }
 
 function child(node: XmlNode, name: string): XmlNode | undefined {
