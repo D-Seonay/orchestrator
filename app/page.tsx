@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import ProjectTable, { type RowAction } from '@/components/ProjectTable';
+import ConfigDrawer from '@/components/ConfigDrawer';
 import LogPanel from '@/components/LogPanel';
 import Toolbar from '@/components/Toolbar';
 import { sendJson, useDashboard } from '@/components/useDashboard';
@@ -11,11 +12,14 @@ export default function DashboardPage() {
   const [selection, setSelection] = useState<ReadonlySet<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [logNames, setLogNames] = useState<string[]>([]);
+  const [configName, setConfigName] = useState<string | null>(null);
 
   const services = useMemo(() => data?.projects.filter((p) => p.kind === 'service') ?? [], [data]);
   const database = data?.projects.find((p) => p.kind === 'database') ?? null;
   // La sélection ne garde que des projets encore présents (dossier supprimé, racine changée…).
   const selected = useMemo(() => services.map((p) => p.name).filter((n) => selection.has(n)), [services, selection]);
+  // Le tiroir se ferme de lui-même si le projet disparaît (dossier supprimé, racine changée…).
+  const configProject = services.find((p) => p.name === configName) ?? null;
   const selectedSet = useMemo(() => new Set(selected), [selected]);
 
   const request = useCallback(async (call: () => Promise<void>) => {
@@ -46,8 +50,7 @@ export default function DashboardPage() {
   // Ouvrir des logs complète le panneau déjà ouvert (ordre d'ouverture conservé).
   const openLogs = (names: string[]) => setLogNames((prev) => [...prev, ...names.filter((n) => !prev.includes(n))]);
 
-  // Tasks 9–10 : tiroir de configuration, dialogue de changement de branche.
-  const openConfig = (name: string) => void name;
+  // Task 10 : dialogue de changement de branche.
   const switchBranch = (names: string[]) => void names;
 
   return (
@@ -102,12 +105,14 @@ export default function DashboardPage() {
             onToggleAll={toggleAll}
             onAction={act}
             onOpenLogs={openLogs}
-            onOpenConfig={openConfig}
+            onOpenConfig={setConfigName}
           />
         </>
       ) : (
         <p className="px-3 py-8 text-xs text-zinc-500">Connexion au serveur…</p>
       )}
+
+      {configProject && <ConfigDrawer key={configProject.name} project={configProject} onClose={() => setConfigName(null)} />}
 
       {logNames.length > 0 && <LogPanel names={logNames} projects={services} connected={connected} onClose={() => setLogNames([])} />}
     </div>

@@ -26,14 +26,15 @@ export function useDashboard(): { data: DashboardPayload | null; connected: bool
   return { data, connected };
 }
 
-/** Appel d'une route mutante (l'en-tête JSON est exigé par la garde CSRF). Lève avec le message d'erreur du serveur. */
-export async function sendJson(url: string, method: 'POST' | 'PUT' | 'DELETE', body?: unknown): Promise<void> {
+/** Appel d'une route (l'en-tête JSON est exigé par la garde CSRF des routes mutantes). Lève avec le message d'erreur du serveur. */
+export async function requestJson<T = unknown>(url: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET', body?: unknown): Promise<T> {
   const res = await fetch(url, {
     method,
+    cache: 'no-store',
     headers: { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (res.ok) return;
+  if (res.ok) return (await res.json().catch(() => undefined)) as T;
   let message = `Erreur ${res.status}`;
   try {
     const payload = (await res.json()) as { error?: unknown };
@@ -43,3 +44,8 @@ export async function sendJson(url: string, method: 'POST' | 'PUT' | 'DELETE', b
   }
   throw new Error(message);
 }
+
+/** Appel d'une route mutante dont la réponse est ignorée. */
+export const sendJson = async (url: string, method: 'POST' | 'PUT' | 'DELETE', body?: unknown): Promise<void> => {
+  await requestJson(url, method, body);
+};
