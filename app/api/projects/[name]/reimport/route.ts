@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { fail, readJson } from '@/lib/api';
+import { fail, guardMutation, readJson } from '@/lib/api';
 import { orchestrator } from '@/lib/orchestrator';
 
 type Ctx = { params: Promise<{ name: string }> };
@@ -15,11 +15,14 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
 }
 
 export async function POST(req: NextRequest, { params }: Ctx) {
+  const denied = guardMutation(req);
+  if (denied) return denied;
   const { name } = await params;
   if (!orchestrator.getSettings(name)) return fail('Projet introuvable', 404);
 
-  // Corps facultatif : sans configKey, la config par défaut est choisie.
-  const body = (await readJson(req)) ?? {};
+  // Corps facultatif : sans configKey, la config par défaut est choisie. Un corps déclaré mais non JSON est refusé.
+  const body = req.headers.has('content-type') ? await readJson(req) : {};
+  if (!body) return fail('Corps JSON invalide');
   const { configKey } = body;
   if (configKey !== undefined && typeof configKey !== 'string') return fail('configKey doit être une chaîne');
 

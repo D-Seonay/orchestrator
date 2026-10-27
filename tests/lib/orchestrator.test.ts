@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import { createOrchestrator } from '@/lib/orchestrator';
@@ -292,4 +292,29 @@ describe('orchestrator', () => {
     const text = orch.logs('svc-a', 0).map((l) => l.text).join('\n');
     expect(text).toContain('npm install');
   }, 120_000);
+
+  it('safeRefresh (timer body) swallows a store.save failure and retries the save on the next tick', () => {
+    addService('svc-a');
+    let fail = true;
+    const flaky = createOrchestrator({
+      store: {
+        load: () => structuredClone(saved),
+        save: (st) => {
+          if (fail) { fail = false; throw Object.assign(new Error('EPERM: rename state.json'), { code: 'EPERM' }); }
+          saved = structuredClone(st);
+        },
+      },
+      pm,
+    });
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(() => flaky.safeRefresh()).not.toThrow();
+      expect(errors).toHaveBeenCalledOnce();
+      // Le tick suivant réessaie et réussit : le serveur continue de fonctionner.
+      expect(() => flaky.safeRefresh()).not.toThrow();
+      expect(saved.projects['svc-a']).toBeDefined();
+    } finally {
+      errors.mockRestore();
+    }
+  }, T);
 });

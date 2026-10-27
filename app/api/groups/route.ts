@@ -1,8 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { fail, isStringArray, readJson } from '@/lib/api';
+import { fail, guardMutation, isStringArray, readJson } from '@/lib/api';
 import { orchestrator } from '@/lib/orchestrator';
 
 export async function PUT(req: NextRequest) {
+  const denied = guardMutation(req);
+  if (denied) return denied;
   const body = await readJson(req);
   if (!body) return fail('Corps JSON invalide');
   const { name, members } = body;
@@ -14,6 +16,8 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const denied = guardMutation(req);
+  if (denied) return denied;
   const name = req.nextUrl.searchParams.get('name');
   if (!name) return fail('name est requis');
 

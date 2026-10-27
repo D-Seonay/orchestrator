@@ -1,11 +1,13 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { fail, isStringArray, readJson } from '@/lib/api';
+import { fail, guardMutation, isStringArray, readJson } from '@/lib/api';
 import { orchestrator } from '@/lib/orchestrator';
 
 const ACTIONS = ['start', 'stop', 'restart'] as const;
 type Action = (typeof ACTIONS)[number];
 
 export async function POST(req: NextRequest) {
+  const denied = guardMutation(req);
+  if (denied) return denied;
   const body = await readJson(req);
   if (!body) return fail('Corps JSON invalide');
   const { names, action } = body;

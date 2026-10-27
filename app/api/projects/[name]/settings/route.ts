@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { fail, isStringRecord, readJson } from '@/lib/api';
+import { fail, guardMutation, isStringRecord, readJson } from '@/lib/api';
 import { orchestrator } from '@/lib/orchestrator';
 
 type Ctx = { params: Promise<{ name: string }> };
@@ -12,6 +12,8 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
 }
 
 export async function PUT(req: NextRequest, { params }: Ctx) {
+  const denied = guardMutation(req);
+  if (denied) return denied;
   const { name } = await params;
   if (!orchestrator.getSettings(name)) return fail('Projet introuvable', 404);
 

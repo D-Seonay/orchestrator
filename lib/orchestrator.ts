@@ -61,6 +61,8 @@ export function createOrchestrator(deps: OrchestratorDeps) {
   const busy = new Set<string>();
   let started = false;
   let gitRefreshing = false;
+  // Import non encore écrit sur disque (save a échoué) : retenté au prochain refresh.
+  let unsaved = false;
 
   const getState = (): StoredState => (state ??= deps.store.load());
   const persist = () => deps.store.save(getState());
@@ -81,19 +83,30 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     rootExists = scan.rootExists;
     repos = new Map(scan.repos.map((r) => [r.name, r]));
 
-    let changed = false;
     for (const repo of scan.repos) {
       if (repo.kind !== 'service' || getState().projects[repo.name]) continue;
       const { launch, env } = detectLaunch(repo.path);
       getState().projects[repo.name] = { launch, env, importedAt: new Date().toISOString() };
-      changed = true;
+      unsaved = true;
     }
-    if (changed) persist();
+    if (unsaved) {
+      persist();
+      unsaved = false;
+    }
 
     for (const name of gitCache.keys()) if (!repos.has(name)) gitCache.delete(name);
     const fresh = scan.repos.map((r) => r.name).filter((name) => !gitCache.has(name));
     for (const name of fresh) gitCache.set(name, null);
     if (fresh.length > 0) void refreshGit(fresh);
+  }
+
+  /** Corps du timer : une erreur (ex. EPERM sur state.json) ne doit jamais faire tomber le serveur et ses services. */
+  function safeRefresh(): void {
+    try {
+      refresh();
+    } catch (err) {
+      console.error('[orchestrator] refresh failed:', err);
+    }
   }
 
   function init(): void {
@@ -102,11 +115,18 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     pm.cleanupOrphans();
     refresh();
 
-    setInterval(refresh, REFRESH_INTERVAL_MS).unref();
+    setInterval(safeRefresh, REFRESH_INTERVAL_MS).unref();
     setInterval(() => {
       if (gitRefreshing) return;
       gitRefreshing = true;
-      void refreshGit([...repos.keys()]).finally(() => { gitRefreshing = false; });
+      try {
+        void refreshGit([...repos.keys()])
+          .catch((err) => console.error('[orchestrator] git refresh failed:', err))
+          .finally(() => { gitRefreshing = false; });
+      } catch (err) {
+        gitRefreshing = false;
+        console.error('[orchestrator] git refresh failed:', err);
+      }
     }, GIT_INTERVAL_MS).unref();
 
     const killAll = () => pm.killAll();
@@ -117,6 +137,8 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     process.on('exit', killAll);
     process.once('SIGINT', onSignal);
     process.once('SIGTERM', onSignal);
+    process.once('SIGHUP', onSignal);
+    process.once('SIGBREAK', onSignal);
   }
 
   function dashboard(): DashboardPayload {
@@ -285,7 +307,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
   }
 
   return {
-    init, refresh, dashboard, act, getSettings, updateSettings, reimport, runConfigs, logs,
+    init, refresh, safeRefresh, dashboard, act, getSettings, updateSettings, reimport, runConfigs, logs,
     branches, switchBranches, setRoot, saveGroup, deleteGroup,
   };
 }
