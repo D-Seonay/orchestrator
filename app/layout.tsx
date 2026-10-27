@@ -2,13 +2,13 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Orchestrator Dashboard',
+  title: 'Orchestrator',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body className="bg-black text-white font-mono antialiased min-h-screen">
+    <html lang="fr" suppressHydrationWarning>
+      <body className="bg-white text-ink font-sans text-sm antialiased min-h-screen">
         {children}
       </body>
     </html>

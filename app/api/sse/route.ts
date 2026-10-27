@@ -1,28 +1,30 @@
-import { NextRequest } from 'next/server';
+import type { NextRequest } from 'next/server';
 import { orchestrator } from '@/lib/orchestrator';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   const encoder = new TextEncoder();
+  let interval: NodeJS.Timeout | undefined;
 
   const stream = new ReadableStream({
     start(controller) {
       const send = () => {
-        const payload = JSON.stringify({
-          apps: orchestrator.getStats(),
-          masterUptime: orchestrator.getMasterUptime(),
-        });
-        controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(orchestrator.dashboard())}\n\n`));
+      };
+      const stop = () => {
+        clearInterval(interval);
+        try { controller.close(); } catch { /* déjà fermé */ }
       };
 
       send();
-      const interval = setInterval(send, 2000);
-
-      req.signal.addEventListener('abort', () => {
-        clearInterval(interval);
-        controller.close();
-      });
+      interval = setInterval(() => {
+        try { send(); } catch { stop(); }
+      }, 2000);
+      req.signal.addEventListener('abort', stop);
+    },
+    cancel() {
+      clearInterval(interval);
     },
   });
 

@@ -1,543 +1,426 @@
-import { spawn, exec, ChildProcess } from 'child_process';
-import fs from 'fs';
+import { spawn } from 'child_process';
 import path from 'path';
 import readline from 'readline';
-import { AppConfig, AppStats } from '@/types';
-import { formatUptime, parseEnv, stripAnsi } from '@/lib/utils';
+import { childEnv } from './child-env';
+import { formatDuration, killTreeAsync } from './kill-tree';
+import { scanRoot } from './discovery';
+import { detectLaunch, listRunConfigs } from './launch';
+import { applySwitch, checkSwitch, getGitInfo, listBranches, type SwitchBranchResult, type SwitchCheck } from './git';
+import { ProcessManager } from './process-manager';
+import { store } from './store';
+import type {
+  DashboardPayload,
+  DiscoveredRepo,
+  GitInfo,
+  LaunchSpec,
+  LogLine,
+  ProjectSettings,
+  ProjectView,
+  RunConfig,
+  RunStatus,
+  StoredState,
+  SwitchResult,
+} from './types';
 
-const CONFIG_PATH = path.join(/*turbopackIgnore: true*/ process.cwd(), 'apps.config.json');
-const MAX_LOG_LINES = 100;
+const REFRESH_INTERVAL_MS = 2000;
+const GIT_INTERVAL_MS = 10_000;
+const INSTALL_TIMEOUT_MS = 10 * 60_000;
 
-const BUILD_PATTERNS = /building\.\.\.|rebuilding\.\.\.|compiling|webpack is (watching|compiling)/i;
-const READY_PATTERNS = /compiled successfully|compiled with warnings|ready|listening on|server started|application running|started server|watching for/i;
+export interface OrchestratorDeps {
+  store: { load(): StoredState; save(s: StoredState): void };
+  pm: ProcessManager;
+  /** Délai de `npm install` après bascule (défaut 10 min). */
+  installTimeoutMs?: number;
+  /** Délai des fetch/pull de la bascule (défaut NETWORK_TIMEOUT_MS). */
+  gitTimeoutMs?: number;
+}
 
-function parseEnvFile(filePath: string): Record<string, string> {
-  if (!fs.existsSync(filePath)) return {};
-  try {
-    return parseEnv(fs.readFileSync(filePath, 'utf8'));
-  } catch {
-    return {};
+const isActive = (status: RunStatus) => status === 'running' || status === 'restarting';
+
+/**
+ * Clé des réglages d'un dépôt : son chemin absolu normalisé (insensible à la casse sous Windows).
+ * Deux racines contenant un dossier du même nom ne partagent donc pas leurs réglages.
+ */
+export function projectKey(dir: string): string {
+  const resolved = path.resolve(dir);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+/** Ancien format (clé = nom du dossier) : la clé devient le chemin du dossier dans la racine. Renvoie true si l'état a changé. */
+export function migrateProjectKeys(state: StoredState): boolean {
+  let changed = false;
+  for (const [key, settings] of Object.entries(state.projects)) {
+    if (path.isAbsolute(key)) continue;
+    const migrated = projectKey(path.join(state.root, key));
+    if (!(migrated in state.projects)) state.projects[migrated] = settings;
+    delete state.projects[key];
+    changed = true;
   }
+  return changed;
 }
 
-interface ProcessState {
-  config: AppConfig;
-  child: ChildProcess | null;
-  shouldRun: boolean;
-  manualRestart: boolean;
-  restarts: number;
-  startTime: number | null;
-  logs: string[];
-  git: { branch: string; dirty: boolean; sync: string };
-  resources: { cpu: string; ram: string };
-  lastUsage?: { time: number; cpuTime: number };
-  buildState?: 'building' | 'ready';
-  crashTimes: number[];
-  circuitOpen: boolean;
-}
+type InstallOutcome = 'ok' | 'failed' | 'timeout';
 
-// Global state survives Next.js hot reloads and module isolation between
-// instrumentation.ts and API route handlers in development.
-const g = globalThis as typeof globalThis & {
-  __orch?: {
-    appsConfig: AppConfig[];
-    processes: Map<string, ProcessState>;
-    masterStartTime: number;
-    initialized: boolean;
-  };
-};
-if (!g.__orch) {
-  g.__orch = {
-    appsConfig: [],
-    processes: new Map(),
-    masterStartTime: Date.now(),
-    initialized: false,
-  };
-}
-const S = g.__orch;
-
-function saveConfig(): void {
-  const tempPath = `${CONFIG_PATH}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(S.appsConfig, null, 2), 'utf8');
-  fs.renameSync(tempPath, CONFIG_PATH);
-}
-
-function killProcess(child: ChildProcess | null): void {
-  if (!child || child.killed) return;
-  const pid = child.pid;
-  if (process.platform === 'win32' && pid) {
-    exec(`taskkill /pid ${pid} /T /F`, (err) => {
-      if (err && !child.killed) {
-        try { child.kill('SIGKILL'); } catch { /* ignore */ }
-      }
-    });
-  } else {
-    try { child.kill('SIGTERM'); } catch { /* ignore */ }
-  }
-}
-
-function updateGitInfo(name: string): void {
-  const state = S.processes.get(name);
-  if (!state || !state.config.cwd) return;
-  const cmd = 'git rev-parse --abbrev-ref HEAD && git status --porcelain && git rev-list --left-right --count HEAD...@{u}';
-  exec(cmd, { cwd: state.config.cwd }, (err, stdout) => {
-    if (err) { state.git = { branch: 'N/A', dirty: false, sync: '' }; return; }
-    const lines = stdout.split('\n');
-    const branch = (lines[0] || '').trim();
-    if (!branch) return;
-    const firstNewline = stdout.indexOf('\n');
-    const porcelain = firstNewline !== -1 ? stdout.slice(firstNewline + 1) : '';
-    const statusLines = porcelain.split('\n').filter(l => l.trim().length > 0);
-    const isDirty = statusLines.some(l => !l.match(/^\d+\t\d+$/));
-    let sync = '';
-    const syncLine = statusLines.find(l => l.match(/^\d+\t\d+$/));
-    if (syncLine) {
-      const [ahead, behind] = syncLine.trim().split('\t').map(Number);
-      if (ahead > 0) sync += `⬆${ahead}`;
-      if (behind > 0) sync += ` ⬇${behind}`;
-    }
-    state.git = { branch, dirty: isDirty, sync: sync.trim() };
-  });
-}
-
-function updateAllResourceUsage(): void {
-  const nodePids: { name: string; pid: number }[] = [];
-  const dockerApps: string[] = [];
-
-  S.appsConfig.forEach(app => {
-    const state = S.processes.get(app.name);
-    if (!state) return;
-
-    if (state.config.type === 'docker') {
-      dockerApps.push(app.name);
-    } else if (state.child && !state.child.killed && state.child.pid) {
-      nodePids.push({ name: app.name, pid: state.child.pid });
-    } else {
-      state.resources = { cpu: '0%', ram: '0MB' };
-    }
-  });
-
-  // Query Docker stats for any containerized apps
-  dockerApps.forEach(name => {
-    const state = S.processes.get(name);
-    if (!state) return;
-    const containerName = `dashboard-${name}`;
-    const cmd = `docker stats ${containerName} --no-stream --format "{{.CPUPerc}},{{.MemUsage}}"`;
-    exec(cmd, (err, stdout) => {
-      if (err || !stdout) {
-        state.resources = { cpu: '0%', ram: '0MB' };
-        return;
-      }
-      const [cpu, mem] = stdout.split(',');
-      state.resources = { cpu: cpu?.trim() || '0%', ram: mem?.split(' / ')[0]?.trim() || '0MB' };
-    });
-  });
-
-  if (nodePids.length === 0) return;
-
-  if (process.platform === 'win32') {
-    // Single batched PowerShell query for all active Node PIDs
-    const pidsList = nodePids.map(p => p.pid).join(',');
-    const cmd = `powershell.exe -NoProfile -Command "@(Get-Process -Id ${pidsList} -ErrorAction SilentlyContinue | Select-Object Id, WorkingSet64, CPU) | ConvertTo-Json -Compress"`;
-    exec(cmd, (err, stdout) => {
-      if (err || !stdout) return;
-      try {
-        const parsed = JSON.parse(stdout);
-        const list: { Id?: number; WorkingSet64?: number; CPU?: number | null }[] = Array.isArray(parsed) ? parsed : [parsed];
-        const byPid = new Map<number, { WorkingSet64: number; CPU: number }>();
-        list.forEach(item => {
-          if (item?.Id) {
-            byPid.set(item.Id, { WorkingSet64: item.WorkingSet64 || 0, CPU: item.CPU ?? 0 });
-          }
-        });
-
-        const now = Date.now();
-        nodePids.forEach(({ name, pid }) => {
-          const state = S.processes.get(name);
-          if (!state) return;
-          const info = byPid.get(pid);
-          if (!info) {
-            state.resources = { cpu: '0%', ram: '0MB' };
-            return;
-          }
-
-          const ram = `${(info.WorkingSet64 / 1024 / 1024).toFixed(1)}MB`;
-          const totalCpuMs = (info.CPU || 0) * 1000;
-
-          if (state.lastUsage) {
-            const timeDiff = now - state.lastUsage.time;
-            const cpuDiff = totalCpuMs - state.lastUsage.cpuTime;
-            const cpuPercent = timeDiff > 0 ? Math.max(0, (cpuDiff / timeDiff) * 100) : 0;
-            state.resources = { cpu: `${cpuPercent.toFixed(1)}%`, ram };
-          } else {
-            state.resources = { cpu: '...', ram };
-          }
-          state.lastUsage = { time: now, cpuTime: totalCpuMs };
-        });
-      } catch {
-        // ignore parse error
-      }
-    });
-  }
-}
-
-function ensureState(config: AppConfig): ProcessState {
-  const existing = S.processes.get(config.name);
-  if (existing) {
-    existing.config = config;
-    return existing;
-  }
-
-  const state: ProcessState = {
-    config,
-    child: null,
-    shouldRun: false,
-    manualRestart: false,
-    restarts: 0,
-    startTime: null,
-    logs: [],
-    git: { branch: '...', dirty: false, sync: '' },
-    resources: { cpu: '0%', ram: '0MB' },
-    crashTimes: [],
-    circuitOpen: false,
-  };
-  S.processes.set(config.name, state);
-  return state;
-}
-
-function startProcess(config: AppConfig): void {
-  ensureState(config);
-  const state = S.processes.get(config.name)!;
-  
-  state.shouldRun = true;
-  state.restarts = state.startTime ? state.restarts + 1 : state.restarts;
-  state.startTime = Date.now();
-  state.manualRestart = false;
-  state.buildState = undefined;
-  state.circuitOpen = false;
-
-  const addLog = (raw: string) => {
-    const msg = stripAnsi(raw).trim();
-    if (!msg) return;
-    const timestamp = new Date().toLocaleTimeString();
-    state.logs.push(`[${timestamp}] ${msg}`);
-    if (state.logs.length > MAX_LOG_LINES) state.logs.shift();
-    if (BUILD_PATTERNS.test(msg)) state.buildState = 'building';
-    else if (READY_PATTERNS.test(msg)) state.buildState = 'ready';
-  };
-
-  if (config.type === 'docker') {
-    state.buildState = 'building';
-    const containerName = `dashboard-${config.name}`;
-    const dockerfilePath = config.dockerfile || config.script || 'Dockerfile';
-    
-    // 1. Build
-    addLog(`DOCKER: Building image dashboard-${config.name}...`);
-    const build = spawn('docker', ['build', '-t', containerName, '-f', dockerfilePath, '.'], {
-      cwd: config.cwd || process.cwd(),
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    readline.createInterface({ input: build.stdout! }).on('line', line => addLog(line));
-    readline.createInterface({ input: build.stderr! }).on('line', line => addLog(`BUILD ERR: ${line}`));
-
-    build.on('exit', (code) => {
-      if (code !== 0) {
-        addLog(`DOCKER: Build failed with code ${code}`);
-        state.buildState = undefined;
-        S.processes.set(config.name, { ...state, child: null });
-        return;
-      }
-
-      addLog(`DOCKER: Build successful. Starting container...`);
-      state.buildState = 'ready';
-
-      // 2. Run
-      const envFilePath = path.join(config.cwd || process.cwd(), '.env');
-      const namedEnvPath = path.join(/*turbopackIgnore: true*/ process.cwd(), `.env.${config.name}`);
-      const dotEnv = parseEnvFile(fs.existsSync(envFilePath) ? envFilePath : namedEnvPath);
-      const combinedEnv = { ...dotEnv, ...(config.env ?? {}) };
-
-      const runArgs = ['run', '--rm', '--name', containerName];
-      Object.entries(combinedEnv).forEach(([k, v]) => {
-        runArgs.push('-e', `${k}=${v}`);
-      });
-      (config.ports || []).forEach(p => {
-        runArgs.push('-p', p);
-      });
-      runArgs.push(containerName);
-
-      const child = spawn('docker', runArgs, {
-        cwd: config.cwd || process.cwd(),
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-
-      state.child = child;
-      S.processes.set(config.name, state);
-
-      readline.createInterface({ input: child.stdout! }).on('line', line => addLog(line));
-      readline.createInterface({ input: child.stderr! }).on('line', line => addLog(`STDERR: ${line}`));
-
-      child.on('exit', (_code, signal) => handleExit(config.name, child, signal));
-    });
-
-    S.processes.set(config.name, state);
-    return;
-  }
-
-  // Node.js implementation
-  const envFilePath = path.join(config.cwd || process.cwd(), '.env');
-  const namedEnvPath = path.join(/*turbopackIgnore: true*/ process.cwd(), `.env.${config.name}`);
-  const dotEnv = parseEnvFile(
-    fs.existsSync(envFilePath) ? envFilePath : namedEnvPath
-  );
-
-  const args = config.args
-    ? [config.script, ...(Array.isArray(config.args) ? config.args : config.args.split(' '))]
-    : [config.script];
-
-  const child = spawn(process.execPath, args, {
-    cwd: config.cwd || process.cwd(),
-    env: { ...process.env, ...dotEnv, ...(config.env ?? {}) },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-
-  state.child = child;
-  S.processes.set(config.name, state);
-  updateGitInfo(config.name);
-
-  readline.createInterface({ input: child.stdout! }).on('line', line => addLog(line));
-  readline.createInterface({ input: child.stderr! }).on('line', line => addLog(`STDERR: ${line}`));
-
-  child.on('exit', (_code, signal) => handleExit(config.name, child, signal));
-}
-
-function handleExit(name: string, child: ChildProcess, signal: string | null): void {
-  const currentState = S.processes.get(name);
-  if (!currentState || currentState.child !== child) return;
-
-  const isManual = currentState.manualRestart;
-  const isExplicitKill = signal === 'SIGTERM' || signal === 'SIGKILL' || !currentState.shouldRun;
-  const isCrash = currentState.shouldRun && !isManual && !isExplicitKill;
-
-  const now = Date.now();
-  const WINDOW_MS = 60_000;
-  const CRASH_THRESHOLD = 5;
-
-  let crashTimes = currentState.crashTimes ?? [];
-  let circuitOpen = currentState.circuitOpen ?? false;
-
-  if (isCrash && !circuitOpen) {
-    crashTimes = [...crashTimes.filter(t => now - t < WINDOW_MS), now];
-    if (crashTimes.length >= CRASH_THRESHOLD) {
-      circuitOpen = true;
-    }
-  }
-
-  const newState = { ...currentState, child: null, resources: { cpu: '0%', ram: '0MB' }, crashTimes, circuitOpen };
-  S.processes.set(name, newState);
-
-  if (circuitOpen && isCrash) {
-    const ts = new Date().toLocaleTimeString();
-    newState.logs.push(`[${ts}] ⚡ CIRCUIT BREAKER: ${crashTimes.length} crashes en 60s — redémarrage automatique suspendu. Reset manuel requis.`);
-    if (newState.logs.length > MAX_LOG_LINES) newState.logs.shift();
-    return;
-  }
-
-  if (currentState.shouldRun && (isManual || !isExplicitKill)) {
-    // Exponential backoff: 1.5s, 3s, 6s... capped at 10s. 500ms on manual restart
-    const delay = isManual
-      ? 500
-      : Math.min(1500 * Math.pow(2, Math.max(0, crashTimes.length - 1)), 10000);
-    setTimeout(() => startProcess(currentState.config), delay);
-  }
-}
-
-export const orchestrator = {
-  init(): void {
-    if (S.initialized) return;
-    S.initialized = true;
+/**
+ * `npm install` dans le dépôt, sortie diffusée dans les logs du projet.
+ * Au-delà de `timeoutMs`, l'arbre de process est tué et le résultat est 'timeout'.
+ */
+function runInstall(pm: ProcessManager, name: string, cwd: string, timeoutMs: number): Promise<InstallOutcome> {
+  return new Promise((resolve) => {
+    let child;
     try {
-      S.appsConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-    } catch {
-      S.appsConfig = [];
+      child = spawn('npm install', { cwd, env: childEnv(), shell: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (err) {
+      pm.log(name, 'sys', `✖ npm install impossible : ${(err as Error).message}`);
+      resolve('failed');
+      return;
     }
-    
-    S.appsConfig.forEach(app => {
-      ensureState(app);
-      
-      const isDocker = app.type === 'docker';
-      const shouldAutoStart = app.autoStart !== undefined ? app.autoStart : !isDocker;
-      
-      if (shouldAutoStart) {
-        startProcess(app);
-      }
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killTreeAsync(child.pid);
+    }, timeoutMs);
+    // npm écrit ses avertissements sur stderr : ce ne sont pas des erreurs du projet.
+    for (const stream of [child.stdout!, child.stderr!]) {
+      readline.createInterface({ input: stream }).on('line', (line) => pm.log(name, 'out', line));
+    }
+    child.once('error', (err) => {
+      clearTimeout(timer);
+      pm.log(name, 'sys', `✖ npm install impossible : ${err.message}`);
+      resolve('failed');
     });
+    child.once('close', (code) => {
+      clearTimeout(timer);
+      resolve(timedOut ? 'timeout' : code === 0 ? 'ok' : 'failed');
+    });
+  });
+}
 
-    // Batched resource metrics every 5 seconds
-    setInterval(() => {
-      updateAllResourceUsage();
-    }, 5000);
+export function createOrchestrator(deps: OrchestratorDeps) {
+  const { pm } = deps;
+  let state: StoredState | null = null;
+  let rootExists = false;
+  let repos = new Map<string, DiscoveredRepo>();
+  const gitCache = new Map<string, GitInfo | null>();
+  const busy = new Set<string>();
+  // Clé des réglages de chaque service lancé, pour garder visible (et arrêtable) un service dont le dossier a disparu.
+  const launched = new Map<string, string>();
+  let started = false;
+  let gitRefreshing = false;
+  // Import non encore écrit sur disque (save a échoué) : retenté au prochain refresh.
+  let unsaved = false;
 
-    // Git info every 15 seconds
+  function getState(): StoredState {
+    if (!state) {
+      state = deps.store.load();
+      if (migrateProjectKeys(state)) unsaved = true; // écrit au prochain refresh
+    }
+    return state;
+  }
+  const persist = () => deps.store.save(getState());
+
+  async function refreshGit(names: string[]): Promise<void> {
+    await Promise.all(
+      names.map(async (name) => {
+        const repo = repos.get(name);
+        if (!repo) return;
+        const info = await getGitInfo(repo.path).catch(() => null);
+        if (repos.has(name)) gitCache.set(name, info);
+      }),
+    );
+  }
+
+  function refresh(): void {
+    const scan = scanRoot(getState().root);
+    rootExists = scan.rootExists;
+    // Même nom mais autre dossier (racine changée) : l'info git en cache n'est plus la sienne.
+    for (const repo of scan.repos) if (repos.get(repo.name)?.path !== repo.path) gitCache.delete(repo.name);
+    repos = new Map(scan.repos.map((r) => [r.name, r]));
+
+    for (const repo of scan.repos) {
+      const key = projectKey(repo.path);
+      if (repo.kind !== 'service' || getState().projects[key]) continue;
+      const { launch, env } = detectLaunch(repo.path);
+      getState().projects[key] = { launch, env, importedAt: new Date().toISOString() };
+      unsaved = true;
+    }
+    if (unsaved) {
+      persist();
+      unsaved = false;
+    }
+
+    for (const name of gitCache.keys()) if (!repos.has(name)) gitCache.delete(name);
+    const fresh = scan.repos.map((r) => r.name).filter((name) => !gitCache.has(name));
+    for (const name of fresh) gitCache.set(name, null);
+    if (fresh.length > 0) void refreshGit(fresh);
+  }
+
+  /** Corps du timer : une erreur (ex. EPERM sur state.json) ne doit jamais faire tomber le serveur et ses services. */
+  function safeRefresh(): void {
+    try {
+      refresh();
+    } catch (err) {
+      console.error('[orchestrator] refresh failed:', err);
+    }
+  }
+
+  function init(): void {
+    if (started) return;
+    started = true;
+    pm.cleanupOrphans();
+    // Gardé comme les ticks : une erreur ici ne doit pas empêcher d'armer les timers et les hooks de sortie.
+    safeRefresh();
+
+    setInterval(safeRefresh, REFRESH_INTERVAL_MS).unref();
     setInterval(() => {
-      S.appsConfig.forEach(app => {
-        updateGitInfo(app.name);
+      if (gitRefreshing) return;
+      gitRefreshing = true;
+      try {
+        void refreshGit([...repos.keys()])
+          .catch((err) => console.error('[orchestrator] git refresh failed:', err))
+          .finally(() => { gitRefreshing = false; });
+      } catch (err) {
+        gitRefreshing = false;
+        console.error('[orchestrator] git refresh failed:', err);
+      }
+    }, GIT_INTERVAL_MS).unref();
+
+    const killAll = () => pm.killAll();
+    const onSignal = () => {
+      killAll();
+      process.exit(0);
+    };
+    process.on('exit', killAll);
+    process.once('SIGINT', onSignal);
+    process.once('SIGTERM', onSignal);
+    process.once('SIGHUP', onSignal);
+    process.once('SIGBREAK', onSignal);
+  }
+
+  function dashboard(): DashboardPayload {
+    const projects: ProjectView[] = [];
+    for (const repo of repos.values()) {
+      projects.push({
+        name: repo.name,
+        kind: repo.kind,
+        path: repo.path,
+        version: repo.version,
+        launch: settingsOf(repo.name)?.launch ?? null,
+        git: gitCache.get(repo.name) ?? null,
+        missing: false,
+        busy: busy.has(repo.name),
+        ...pm.status(repo.name),
       });
-    }, 15000);
-  },
-
-  start(name: string): void {
-    const state = S.processes.get(name);
-    if (state) {
-      state.shouldRun = true;
-      state.circuitOpen = false;
-      state.crashTimes = [];
-      if (!state.child || state.child.killed) startProcess(state.config);
     }
-  },
-
-  stop(name: string): void {
-    const state = S.processes.get(name);
-    if (state) {
-      state.shouldRun = false;
-      if (state.config.type === 'docker') {
-        exec(`docker stop dashboard-${name}`);
-      } else {
-        killProcess(state.child);
+    // Dossier disparu mais service encore lancé : on le garde visible pour pouvoir l'arrêter.
+    for (const [name, key] of launched) {
+      if (repos.has(name)) continue;
+      const status = pm.status(name);
+      const settings = getState().projects[key];
+      if (!isActive(status.status) || !settings) {
+        launched.delete(name);
+        continue;
       }
+      projects.push({
+        name,
+        kind: 'service',
+        path: settings.launch?.cwd ?? '',
+        version: null,
+        launch: settings.launch,
+        git: null,
+        missing: true,
+        busy: busy.has(name),
+        ...status,
+      });
     }
-  },
+    projects.sort((a, b) => a.name.localeCompare(b.name));
 
-  restart(name: string): void {
-    const state = S.processes.get(name);
-    if (state) {
-      state.shouldRun = true;
-      state.circuitOpen = false;
-      state.crashTimes = [];
-      if (state.config.type === 'docker') {
-        state.manualRestart = true;
-        exec(`docker stop dashboard-${name}`);
-      } else if (state.child) {
-        state.manualRestart = true;
-        killProcess(state.child);
-      } else {
-        startProcess(state.config);
-      }
-    }
-  },
+    const database = [...repos.values()].find((r) => r.kind === 'database');
+    return {
+      root: getState().root,
+      rootExists,
+      dbVersion: database?.version ?? null,
+      projects,
+      groups: getState().groups,
+    };
+  }
 
-  add(config: AppConfig): void {
-    S.appsConfig.push(config);
-    saveConfig();
-    startProcess(config);
-  },
+  /** Réglages d'un dépôt du dossier racine courant (undefined pour un nom absent du scan). */
+  const settingsOf = (name: string): ProjectSettings | undefined => {
+    const repo = repos.get(name);
+    return repo ? getState().projects[projectKey(repo.path)] : undefined;
+  };
 
-  update(name: string, patch: Partial<AppConfig>): void {
-    const index = S.appsConfig.findIndex(a => a.name === name);
-    if (index === -1) return;
+  async function startService(name: string, repoPath: string, launch: LaunchSpec, env: Record<string, string>, restart: boolean): Promise<void> {
+    launched.set(name, projectKey(repoPath));
+    if (restart) await pm.restart(name, launch, env);
+    else pm.start(name, launch, env);
+  }
 
-    const isRename = patch.name && patch.name !== name;
-    S.appsConfig[index] = { ...S.appsConfig[index], ...patch };
-    saveConfig();
-
-    if (isRename) {
-      const oldState = S.processes.get(name);
-      if (oldState) {
-        const wasRunning = oldState.shouldRun;
-        oldState.shouldRun = false;
-        killProcess(oldState.child);
-        S.processes.set(patch.name!, {
-          ...oldState,
-          config: S.appsConfig[index],
-          shouldRun: wasRunning,
-          child: null,
-          restarts: wasRunning ? oldState.restarts - 1 : oldState.restarts,
-        });
-        S.processes.delete(name);
-        if (wasRunning) startProcess(S.appsConfig[index]);
-      }
-    } else {
-      const state = S.processes.get(name);
-      if (state) {
-        state.config = S.appsConfig[index];
-        this.restart(name);
-      }
-    }
-  },
-
-  remove(name: string): void {
-    this.stop(name);
-    S.appsConfig = S.appsConfig.filter(a => a.name !== name);
-    S.processes.delete(name);
-    saveConfig();
-  },
-
-  getStats(): AppStats[] {
-    return S.appsConfig.map(app => {
-      const state = S.processes.get(app.name);
-      if (!state) return null;
-      const isOnline = !!state.child && !state.child.killed;
-      const uptime = isOnline && state.startTime
-        ? Math.floor((Date.now() - state.startTime) / 1000)
-        : 0;
-      return {
-        name: app.name,
-        script: app.script,
-        args: app.args,
-        cwd: app.cwd,
-        env: app.env,
-        group: app.group,
-        status: (state.buildState === 'building' ? 'Building'
-          : isOnline ? 'Online'
-          : state.circuitOpen ? 'Crashed'
-          : state.shouldRun ? 'Restarting' : 'Stopped') as AppStats['status'],
-        restarts: state.restarts || 0,
-        uptime: formatUptime(uptime),
-        cpu: state.resources?.cpu || '0%',
-        ram: state.resources?.ram || '0MB',
-        git: state.git || { branch: '-', dirty: false, sync: '' },
-        shouldRun: state.shouldRun,
-        logs: state.logs || [],
-      };
-    }).filter(Boolean) as AppStats[];
-  },
-
-  getMasterUptime(): string {
-    return formatUptime(Math.floor((Date.now() - S.masterStartTime) / 1000));
-  },
-
-  getAppsConfig(): AppConfig[] {
-    return S.appsConfig;
-  },
-
-  startGroup(group: string): void {
-    S.appsConfig.filter(a => a.group === group).forEach(a => this.start(a.name));
-  },
-
-  stopGroup(group: string): void {
-    S.appsConfig.filter(a => a.group === group).forEach(a => this.stop(a.name));
-  },
-
-  restartGroup(group: string): void {
-    S.appsConfig.filter(a => a.group === group).forEach(a => this.restart(a.name));
-  },
-
-  gitPull(name: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const state = S.processes.get(name);
-      const cwd = state?.config.cwd || process.cwd();
-      exec('git pull', { cwd }, (err, stdout, stderr) => {
-        const output = stripAnsi((stdout || stderr || '').trim());
-        const currentState = S.processes.get(name);
-        if (currentState) {
-          const timestamp = new Date().toLocaleTimeString();
-          currentState.logs.push(`[${timestamp}] GIT: ${output}`);
-          if (currentState.logs.length > MAX_LOG_LINES) currentState.logs.shift();
+  async function act(names: string[], action: 'start' | 'stop' | 'restart'): Promise<void> {
+    await Promise.all(
+      names.map(async (name) => {
+        if (busy.has(name) || repos.get(name)?.kind === 'database') return;
+        // Verrou partagé avec la bascule de branche : un redémarrage ne peut pas s'intercaler.
+        busy.add(name);
+        try {
+          // Arrêt possible même si le dossier a disparu ; lancement seulement pour un dépôt de la racine courante.
+          if (action === 'stop') return await pm.stop(name);
+          const repo = repos.get(name);
+          const settings = settingsOf(name);
+          if (!repo || !settings?.launch) return;
+          await startService(name, repo.path, settings.launch, settings.env, action === 'restart');
+        } finally {
+          busy.delete(name);
         }
-        if (err) reject(new Error(output || err.message));
-        else resolve(output);
-      });
-    });
-  },
-};
+      }),
+    );
+  }
+
+  const getSettings = (name: string): ProjectSettings | null => {
+    const key = repos.has(name) ? projectKey(repos.get(name)!.path) : launched.get(name);
+    return key ? getState().projects[key] ?? null : null;
+  };
+
+  function updateSettings(name: string, patch: { command?: string; env?: Record<string, string> }): void {
+    const settings = getSettings(name);
+    if (!settings) throw new Error(`Projet inconnu : ${name}`);
+    if (patch.command !== undefined) {
+      const cwd = settings.launch?.cwd ?? repos.get(name)?.path;
+      if (!cwd) throw new Error(`Dossier introuvable pour ${name}`);
+      settings.launch = { command: patch.command, cwd, source: 'manual' };
+    }
+    if (patch.env !== undefined) settings.env = patch.env;
+    persist();
+  }
+
+  function reimport(name: string, configKey?: string): ProjectSettings {
+    const repo = repos.get(name);
+    if (!repo || repo.kind !== 'service') throw new Error(`Projet inconnu : ${name}`);
+    const { launch, env } = detectLaunch(repo.path, configKey);
+    const settings: ProjectSettings = { launch, env, importedAt: new Date().toISOString() };
+    getState().projects[projectKey(repo.path)] = settings;
+    persist();
+    return settings;
+  }
+
+  const runConfigs = (name: string): RunConfig[] => {
+    const repo = repos.get(name);
+    return repo ? listRunConfigs(repo.path) : [];
+  };
+
+  const logs = (name: string, since: number): LogLine[] => pm.logs(name, since);
+
+  async function branches(names: string[]): Promise<string[]> {
+    const lists = await Promise.all(
+      names.map((name) => {
+        const repo = repos.get(name);
+        return repo ? listBranches(repo.path) : [];
+      }),
+    );
+    return [...new Set(lists.flat())].sort();
+  }
+
+  async function switchOne(name: string, branch: string, opts: { stash: boolean }): Promise<SwitchResult> {
+    const repo = repos.get(name);
+    if (!repo) return { name, ok: false, reason: 'error', detail: 'projet introuvable' };
+    if (busy.has(name)) return { name, ok: false, reason: 'busy' };
+    busy.add(name);
+    try {
+      const log = (text: string) => pm.log(name, 'sys', text);
+      const switchOpts = { ...opts, timeoutMs: deps.gitTimeoutMs };
+      const logFailure = (o: SwitchBranchResult) => log(`✖ Bascule impossible (${o.reason}) : ${o.detail ?? ''}`);
+      const settings = settingsOf(name);
+
+      log(`⇄ Bascule vers ${branch}`);
+      // Pré-vérification avant tout arrêt : un projet refusé (modifs, branche absente) n'est pas touché.
+      let check: SwitchCheck;
+      try {
+        check = await checkSwitch(repo.path, branch, switchOpts);
+      } catch (err) {
+        check = { ok: false, result: { ok: false, reason: 'error', detail: (err as Error).message, lockChanged: false } };
+      }
+      if (!check.ok) {
+        logFailure(check.result);
+        await refreshGit([name]);
+        const { reason, detail } = check.result;
+        return { name, ok: false, reason, detail, installed: false, restarted: false };
+      }
+
+      const wasRunning = isActive(pm.status(name).status);
+      if (wasRunning) {
+        log('■ Arrêt avant la bascule');
+        await pm.stop(name);
+      }
+
+      let outcome: SwitchBranchResult;
+      try {
+        outcome = await applySwitch(repo.path, check.plan, switchOpts);
+      } catch (err) {
+        outcome = { ok: false, reason: 'error', detail: (err as Error).message, lockChanged: false };
+      }
+      if (outcome.ok) log(`✔ Sur la branche ${branch}`);
+      else logFailure(outcome);
+
+      let installed = false;
+      let detail = outcome.detail;
+      if (outcome.lockChanged) {
+        log('▶ package-lock.json modifié — npm install');
+        const install = await runInstall(pm, name, repo.path, deps.installTimeoutMs ?? INSTALL_TIMEOUT_MS);
+        installed = install === 'ok';
+        const problem = install === 'timeout'
+          ? `npm install interrompu après ${formatDuration(deps.installTimeoutMs ?? INSTALL_TIMEOUT_MS)}`
+          : 'npm install a échoué';
+        log(installed ? '✔ npm install terminé' : `✖ ${problem}`);
+        if (!installed) detail = [detail, problem].filter(Boolean).join(' — ');
+      }
+
+      // Relance même si l'application a échoué : on ne laisse pas éteint un service qui tournait.
+      let restarted = false;
+      if (wasRunning && settings?.launch) {
+        log('▶ Relance');
+        await startService(name, repo.path, settings.launch, settings.env, false);
+        restarted = true;
+      }
+
+      await refreshGit([name]);
+      return { name, ok: outcome.ok, reason: outcome.reason, detail, installed, restarted };
+    } finally {
+      busy.delete(name);
+    }
+  }
+
+  const switchBranches = (names: string[], branch: string, opts: { stash: boolean }): Promise<SwitchResult[]> =>
+    Promise.all(names.map((name) => switchOne(name, branch, opts)));
+
+  function setRoot(root: string): void {
+    getState().root = root;
+    persist();
+    refresh();
+  }
+
+  function saveGroup(name: string, members: string[]): void {
+    getState().groups[name] = [...new Set(members)];
+    persist();
+  }
+
+  function deleteGroup(name: string): void {
+    delete getState().groups[name];
+    persist();
+  }
+
+  return {
+    init, refresh, safeRefresh, dashboard, act, getSettings, updateSettings, reimport, runConfigs, logs,
+    branches, switchBranches, setRoot, saveGroup, deleteGroup,
+  };
+}
+
+declare global {
+  var __orch: ReturnType<typeof createOrchestrator> | undefined;
+}
+
+// Singleton partagé entre instrumentation.ts et les routes, qui peuvent vivre dans des bundles distincts.
+export const orchestrator = (globalThis.__orch ??= createOrchestrator({
+  store,
+  pm: new ProcessManager({ pidFile: path.join(process.cwd(), 'data', 'pids.json') }),
+}));
