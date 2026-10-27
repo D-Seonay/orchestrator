@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import type { StoredState } from './types';
 
-export const DEFAULT_ROOT = 'C:\Repositories\AtoolDev\semaphore';
+export const DEFAULT_ROOT = 'C:\\Repositories\\AtoolDev\\semaphore';
 
 function defaults(): StoredState {
   return { root: DEFAULT_ROOT, projects: {}, groups: {} };

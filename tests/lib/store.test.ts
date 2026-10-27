@@ -18,6 +18,10 @@ describe('store', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it('DEFAULT_ROOT is the Windows path with real backslashes', () => {
+    expect(DEFAULT_ROOT).toBe('C:\\Repositories\\AtoolDev\\semaphore');
+  });
+
   it('load returns defaults when file is missing', () => {
     expect(createStore(file).load()).toEqual({ root: DEFAULT_ROOT, projects: {}, groups: {} });
   });
@@ -30,10 +34,10 @@ describe('store', () => {
 
   it('save then load round-trips', () => {
     const state: StoredState = {
-      root: 'D:\repos',
+      root: 'D:\\repos',
       projects: {
         'api-semaphore': {
-          launch: { command: 'node server.js', cwd: 'D:\repos\api-semaphore', source: 'manual' },
+          launch: { command: 'node server.js', cwd: 'D:\\repos\\api-semaphore', source: 'manual' },
           env: { PORT: '3000' },
           importedAt: '2026-10-27T10:00:00.000Z',
         },
